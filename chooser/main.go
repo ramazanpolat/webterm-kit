@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,17 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// decodeArg URL-decodes the auto-attach argument so the SPA can safely
+// percent-encode session names that contain slashes (or other URL-tricky
+// chars). Idempotent for already-clean names: "main" → "main",
+// "claude%2Fwebterm-kit%2Freview" → "claude/webterm-kit/review".
+func decodeArg(s string) string {
+	if d, err := url.QueryUnescape(s); err == nil {
+		return d
+	}
+	return s
+}
 
 // playbooksDir resolves the playbooks root, honoring PLAYBOOKS_DIR env override
 // (matches install.sh). Returns "" if neither env nor $HOME is usable.
@@ -410,13 +422,15 @@ func attachOrStartPlaybook(name string) error {
 func main() {
 	notice := ""
 	// Auto-attach mode: if argv[1] is set (via ttyd -a / URL ?arg=name),
-	// attach-or-create that tmux session and skip the picker.
+	// attach-or-create that tmux session and skip the picker. URL-decode the
+	// arg so session names with slashes etc. survive the round trip through
+	// ttyd's URL-arg machinery (which we can't make accept literal slashes).
 	if len(os.Args) > 1 && os.Args[1] != "" {
-		name := os.Args[1]
+		name := decodeArg(os.Args[1])
 		if err := runChild("tmux", "new", "-A", "-s", name); err == nil {
 			return
 		}
-		notice = fmt.Sprintf("could not attach/create %q — pick another", os.Args[1])
+		notice = fmt.Sprintf("could not attach/create %q — pick another", name)
 	}
 	for {
 		p := tea.NewProgram(newModel(notice), tea.WithAltScreen())

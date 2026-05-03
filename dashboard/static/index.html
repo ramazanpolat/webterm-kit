@@ -256,7 +256,10 @@
       return;
     }
     list.innerHTML = '<div class="section-title">tmux sessions</div>' + sessions.map(s => {
-      const url = '/tmux/' + encodeURIComponent(s.name) + '/';
+      // Slashed session names can't go through /tmux/<name>/ — Caddy's regex
+      // matcher doesn't allow / inside the captured name. Always link straight
+      // to /chooser/?arg=<encoded>. The chooser binary URL-decodes argv[1].
+      const url = '/chooser/?arg=' + encodeURIComponent(s.name);
       const winBadge = '<span class="badge">' + s.windows + ' window' + (s.windows === 1 ? '' : 's') + '</span>';
       const attachBadge = s.attached > 0
         ? '<span class="badge attached">attached &times;' + s.attached + '</span>'
@@ -287,7 +290,8 @@
     e.preventDefault();
     const name = document.getElementById('new-name').value.trim();
     if (!name) return false;
-    window.location.href = '/tmux/' + encodeURIComponent(name) + '/';
+    // Same reason as session card links: bypass Caddy regex for slashed names.
+    window.location.href = '/chooser/?arg=' + encodeURIComponent(name);
     return false;
   }
 
