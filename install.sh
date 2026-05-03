@@ -210,7 +210,10 @@ EOF
 done
 
 # --- dashboard service (Go HTTP, fronted by Caddy) ---
-chooser_url="https://$TAILNET_HOST/chooser"
+# Trailing slash matters: Caddy's `/chooser/*` handler matches /chooser/ and
+# /chooser/foo but NOT bare /chooser, which falls through to the dashboard
+# catch-all and re-serves the SPA (looks like the link is broken).
+chooser_url="https://$TAILNET_HOST/chooser/"
 label="$LABEL_PREFIX.$DASHBOARD_PORT"
 script="$GENERATED_DIR/dashboard.sh"
 plist="$LAUNCHD_DIR/$label.plist"

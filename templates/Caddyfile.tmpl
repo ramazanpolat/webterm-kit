@@ -29,6 +29,9 @@ https://__TAILNET_HOST__:443, https://__BIND_IP__:443 {
 	# WebSocket upgrades (ttyd) are handled by reverse_proxy automatically.
 
 	# --- TUI picker --------------------------------------------------
+	# /chooser (no trailing slash) → 301 to /chooser/ so manually-typed URLs work.
+	# Without this, bare /chooser falls through to the dashboard catch-all.
+	redir /chooser /chooser/ 301
 	handle /chooser/* {
 		reverse_proxy 127.0.0.1:__CHOOSER_PORT__
 	}
