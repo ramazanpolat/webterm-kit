@@ -41,7 +41,7 @@ npm test
 BROWSER_RC=$?
 
 if (( SMOKE_RC == 0 && BROWSER_RC == 0 )); then
-  printf "\n%s all tiers passed\n" "$(green '==')"
+  printf "\n%s tiers 1+2 passed (tier 3 is manual — see test/browser/scenarios.md)\n" "$(green '==')"
   exit 0
 fi
 printf "\n%s smoke=%d browser=%d\n" "$(red '==')" "$SMOKE_RC" "$BROWSER_RC"
