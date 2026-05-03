@@ -177,6 +177,30 @@
 <script>
   let chooserUrl = '';
 
+  // Page mode based on URL: 'all' shows both sections, 'playbook' shows only
+  // playbooks, 'tmux' shows only sessions. Read once at boot so the section
+  // visibility persists across refreshes (load() doesn't touch it).
+  const pageMode = (() => {
+    const p = window.location.pathname;
+    if (p === '/playbook' || p.startsWith('/playbook/')) return 'playbook';
+    if (p === '/tmux' || p.startsWith('/tmux/')) return 'tmux';
+    return 'all';
+  })();
+
+  function applyPageMode() {
+    const pb = document.getElementById('playbooks');
+    const ss = document.getElementById('sessions');
+    const form = document.querySelector('.controls');
+    if (pageMode === 'playbook') {
+      ss.style.display = 'none';
+      form.style.display = 'none';
+      document.title = 'webterm playbooks';
+    } else if (pageMode === 'tmux') {
+      pb.style.display = 'none';
+      document.title = 'webterm tmux';
+    }
+  }
+
   async function load() {
     const errEl = document.getElementById('error');
     try {
@@ -279,6 +303,7 @@
 
   document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
   window.addEventListener('hashchange', applyHash);
+  applyPageMode();
   load().then(applyHash);
 </script>
 </body>

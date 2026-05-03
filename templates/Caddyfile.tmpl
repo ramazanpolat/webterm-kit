@@ -35,27 +35,24 @@ https://__TAILNET_HOST__:443, https://__BIND_IP__:443 {
 
 	# --- tmux namespace ----------------------------------------------
 	# /tmux/<name>/ → attach (or create) tmux session <name> via the chooser's
-	# auto-attach mode. We redirect (302) so the user-visible URL becomes the
-	# canonical chooser one — keeps WS routing simple.
+	# auto-attach mode. 302 redirect (URL becomes /chooser/?arg=<name>); keeping
+	# the URL stable would need a per-session ttyd, which isn't worth the
+	# complexity for a dynamic set of sessions.
 	@tmux_named path_regexp tmux_named ^/tmux/([^/]+)/?$
 	handle @tmux_named {
 		redir /chooser/?arg={re.tmux_named.1} 302
 	}
-	# /tmux or /tmux/ alone → the picker.
-	@tmux_root path /tmux /tmux/
-	handle @tmux_root {
-		redir /chooser/ 302
-	}
+	# Note: /tmux and /tmux/ (no name) fall through to the dashboard catch-all,
+	# which serves an HTML list view of tmux sessions.
 
 	# --- playbook namespace ------------------------------------------
 __PLAYBOOK_ROUTES__
-	# /playbook or /playbook/ alone → jump to the dashboard's Playbooks section.
-	@playbook_root path /playbook /playbook/
-	handle @playbook_root {
-		redir /#playbooks 302
-	}
+	# Note: /playbook and /playbook/ (no name) fall through to the dashboard
+	# catch-all, which serves an HTML list view of playbooks.
 
 	# --- dashboard at root (must be last so more-specific handles win) -
+	# Also serves /playbook(/) and /tmux(/) — the dashboard reads window.location
+	# and hides the irrelevant section.
 	handle {
 		reverse_proxy 127.0.0.1:__DASHBOARD_PORT__
 	}

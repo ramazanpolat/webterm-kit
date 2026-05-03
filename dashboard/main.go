@@ -247,6 +247,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Serve the same index.html at /, /playbook(/), and /tmux(/). The SPA reads
+	// window.location.pathname and hides the irrelevant section. This way the
+	// user gets a dedicated list view at /playbook/ and /tmux/ without us
+	// duplicating templates server-side.
+	indexBytes, err := fs.ReadFile(staticRoot, "index.html")
+	if err != nil {
+		log.Fatal(err)
+	}
+	serveIndex := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Write(indexBytes)
+	}
+	mux.HandleFunc("/playbook", serveIndex)
+	mux.HandleFunc("/playbook/", serveIndex)
+	mux.HandleFunc("/tmux", serveIndex)
+	mux.HandleFunc("/tmux/", serveIndex)
 	mux.Handle("/", http.FileServer(http.FS(staticRoot)))
 
 	addr := fmt.Sprintf("%s:%d", *bind, *port)
