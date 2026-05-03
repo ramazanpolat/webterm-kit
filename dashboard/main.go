@@ -47,6 +47,47 @@ type StatusEntry struct {
 	PID        int    `json:"pid"` // tmux session PID, 0 if not running
 }
 
+// Service is a user-defined entry in services.json. The dashboard renders one
+// card per service under the matching `Category` tab. If `ProxyTo` is set, the
+// installer also generates a Caddy reverse_proxy block for the service's URL
+// path so it lives under the same hostname.
+type Service struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Category    string `json:"category,omitempty"` // tab name: "services" (default), "storage", "media", ...
+	Icon        string `json:"icon,omitempty"`     // emoji or single char
+	URL         string `json:"url,omitempty"`      // public URL/path the card links to
+	ProxyTo     string `json:"proxy_to,omitempty"` // backend like 127.0.0.1:8096 (used by install.sh)
+}
+
+// loadServices reads the services file. Missing file → empty list (the user
+// just hasn't added any services yet — not an error).
+func loadServices(path string) []Service {
+	if path == "" {
+		return []Service{}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("services file %q: %v", path, err)
+		}
+		return []Service{}
+	}
+	var wrapper struct {
+		Services []Service `json:"services"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		log.Printf("services file %q: invalid JSON: %v", path, err)
+		return []Service{}
+	}
+	for i := range wrapper.Services {
+		if wrapper.Services[i].Category == "" {
+			wrapper.Services[i].Category = "services"
+		}
+	}
+	return wrapper.Services
+}
+
 func listSessions() []Session {
 	// Field separator is the two-byte literal "\t" (raw string, not "\t" which
 	// is a real tab). tmux's -F output passes this through; if we sent a real
@@ -212,6 +253,7 @@ func main() {
 	keyFile := flag.String("key", "", "TLS key file")
 	chooserURL := flag.String("chooser-url", "", "base URL of the chooser ttyd, e.g. https://host/chooser")
 	playbooksDir := flag.String("playbooks-dir", "", "path to playbooks root (default $HOME/.claude-playbooks)")
+	servicesFile := flag.String("services-file", "", "path to services.json (default $HOME/.webterm-kit/services.json)")
 	flag.Parse()
 
 	if *playbooksDir == "" {
@@ -219,6 +261,13 @@ func main() {
 			*playbooksDir = env
 		} else if home, err := os.UserHomeDir(); err == nil {
 			*playbooksDir = filepath.Join(home, ".claude-playbooks")
+		}
+	}
+	if *servicesFile == "" {
+		if env := os.Getenv("SERVICES_FILE"); env != "" {
+			*servicesFile = env
+		} else if home, err := os.UserHomeDir(); err == nil {
+			*servicesFile = filepath.Join(home, ".webterm-kit", "services.json")
 		}
 	}
 
@@ -231,6 +280,14 @@ func main() {
 			"sessions":   listSessions(),
 			"playbooks":  listPlaybooks(*playbooksDir),
 			"chooserUrl": *chooserURL,
+		})
+	})
+
+	mux.HandleFunc("/api/services", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(map[string]any{
+			"services": loadServices(*servicesFile),
 		})
 	})
 

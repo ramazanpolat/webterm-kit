@@ -3,312 +3,425 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>webterm dashboard</title>
+<title>kit</title>
 <style>
   :root {
-    --bg: #0e1116;
-    --fg: #e6edf3;
-    --dim: #8b949e;
-    --accent: #7d8cf0;
-    --card: #161b22;
-    --border: #30363d;
-    --hover: #1f242c;
-    --attached: #56d364;
+    --bg: #0b0d12;
+    --bg-elev: #131720;
+    --fg: #d7dde6;
+    --fg-dim: #7d8694;
+    --fg-faint: #4a5260;
+    --rule: #1f2530;
+    --rule-bright: #2a3140;
+    --accent: #82b1ff;
+    --green: #5dd39e;
+    --amber: #f0b86e;
+    --red: #ff7777;
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
-    font: 14px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
     background: var(--bg);
     color: var(--fg);
+    font: 14px/1.5 var(--mono);
     min-height: 100vh;
   }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ::selection { background: var(--accent); color: var(--bg); }
+
+  /* --- header --- */
   header {
+    border-bottom: 1px solid var(--rule);
+    padding: 14px 24px;
+    display: flex;
+    align-items: baseline;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  header .brand {
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+    color: var(--fg);
+  }
+  header .brand .prompt { color: var(--accent); margin-right: 6px; }
+  header .meta { color: var(--fg-faint); font-size: 12px; margin-left: auto; }
+
+  /* --- tabs --- */
+  nav.tabs {
+    display: flex;
+    gap: 0;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--bg);
+    overflow-x: auto;
+  }
+  nav.tabs a {
+    padding: 12px 16px;
+    color: var(--fg-dim);
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    white-space: nowrap;
+    font-size: 13px;
+    text-decoration: none;
+  }
+  nav.tabs a:hover { color: var(--fg); text-decoration: none; }
+  nav.tabs a.active {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
+  }
+  nav.tabs a .key {
+    color: var(--fg-faint);
+    font-size: 11px;
+    margin-right: 6px;
+  }
+  nav.tabs a.active .key { color: var(--accent); }
+
+  /* --- layout --- */
+  main {
+    padding: 24px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* --- shared bits --- */
+  .row-title {
+    color: var(--fg-faint);
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    margin: 24px 0 10px;
+  }
+  .row-title:first-child { margin-top: 0; }
+
+  .card {
+    display: block;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    background: var(--bg-elev);
+    border: 1px solid var(--rule);
+    border-left: 2px solid var(--rule-bright);
+    border-radius: 4px;
+    color: inherit;
+    transition: border-color .12s, background .12s;
+  }
+  .card:hover {
+    border-color: var(--accent);
+    border-left-color: var(--accent);
+    text-decoration: none;
+  }
+  .card .row1 {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 16px 24px;
-    border-bottom: 1px solid var(--border);
+    gap: 12px;
   }
-  h1 {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  .card .name { color: var(--fg); font-weight: 500; }
+  .card .desc { color: var(--fg-dim); font-size: 12px; margin-top: 4px; }
+  .card .meta { color: var(--fg-faint); font-size: 11px; flex-shrink: 0; }
+  .icon { display: inline-block; width: 18px; text-align: center; margin-right: 6px; }
+
+  /* status dot */
+  .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+    background: var(--fg-faint);
+    vertical-align: middle;
   }
-  header nav { display: flex; gap: 12px; align-items: center; }
-  a { color: var(--accent); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  main { padding: 24px; max-width: 960px; margin: 0 auto; }
+  .dot.green { background: var(--green); box-shadow: 0 0 6px rgba(93,211,158,0.45); }
+  .dot.amber { background: var(--amber); }
+  .dot.red   { background: var(--red); }
+
+  /* status pill */
+  .pill {
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 9px;
+    border: 1px solid var(--rule-bright);
+    color: var(--fg-dim);
+  }
+  .pill.green { color: var(--green); border-color: var(--green); }
+
+  /* form / input */
   .controls {
     display: flex;
     gap: 8px;
-    margin-bottom: 24px;
+    margin-top: 16px;
+    margin-bottom: 4px;
   }
   .controls input {
     flex: 1;
-    padding: 8px 12px;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
+    padding: 9px 12px;
+    background: var(--bg-elev);
+    border: 1px solid var(--rule-bright);
+    border-radius: 4px;
     color: var(--fg);
     font: inherit;
   }
-  .controls input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  button {
-    padding: 8px 16px;
-    border-radius: 6px;
-    font: inherit;
-    cursor: pointer;
-  }
-  button.primary {
-    background: var(--accent);
-    color: var(--bg);
-    border: 0;
-    font-weight: 600;
-  }
-  button.ghost {
+  .controls input::placeholder { color: var(--fg-faint); }
+  .controls input:focus { outline: none; border-color: var(--accent); }
+  .controls button {
+    padding: 9px 16px;
+    border-radius: 4px;
+    border: 1px solid var(--accent);
     background: transparent;
-    color: var(--dim);
-    border: 1px solid var(--border);
+    color: var(--accent);
+    cursor: pointer;
+    font: inherit;
   }
-  button.ghost:hover { color: var(--fg); border-color: var(--accent); }
-  .session {
-    display: block;
-    padding: 16px 20px;
-    margin-bottom: 12px;
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: inherit;
-    transition: background .1s, border-color .1s;
-  }
-  .session:hover {
-    background: var(--hover);
-    border-color: var(--accent);
-    text-decoration: none;
-  }
-  .session-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 8px;
-    gap: 12px;
-  }
-  .session-name {
-    font-size: 16px;
-    font-weight: 600;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-  }
-  .badges { display: flex; gap: 6px; flex-shrink: 0; }
-  .badge {
-    font-size: 12px;
-    padding: 2px 8px;
-    border-radius: 10px;
-    background: var(--border);
-    color: var(--dim);
-  }
-  .badge.attached { background: var(--attached); color: var(--bg); font-weight: 600; }
-  .badge.running { background: var(--attached); color: var(--bg); font-weight: 600; }
-  .badge.idle { background: var(--border); color: var(--dim); }
-  .badge.playbook { background: #2d3147; color: #b3befa; }
-  .section-title {
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--dim);
-    margin: 24px 0 12px;
-    font-weight: 600;
-  }
-  .section-title:first-child { margin-top: 0; }
-  .panes {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 12px;
-    color: var(--dim);
-  }
-  .panes li { padding: 2px 0; }
-  .panes .cmd { color: var(--fg); }
-  .panes .idx { display: inline-block; min-width: 36px; color: var(--dim); }
+  .controls button:hover { background: var(--accent); color: var(--bg); }
+
+  /* empty state */
   .empty {
+    border: 1px dashed var(--rule-bright);
+    border-radius: 4px;
+    padding: 32px 24px;
+    color: var(--fg-faint);
     text-align: center;
-    color: var(--dim);
-    padding: 64px 0;
+    font-size: 13px;
   }
-  .error {
-    padding: 12px 16px;
-    background: #4d1f1f;
-    border: 1px solid #8b3a3a;
-    border-radius: 6px;
+  .empty code {
+    background: var(--bg-elev);
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: var(--fg-dim);
+  }
+  .empty .hint { margin-top: 12px; font-size: 12px; }
+
+  /* error banner */
+  .err {
+    padding: 10px 14px;
+    background: #3a1c1c;
+    border: 1px solid #6b2c2c;
+    border-radius: 4px;
     color: #f5b5b5;
     margin-bottom: 16px;
-  }
-  footer {
-    text-align: center;
-    color: var(--dim);
     font-size: 12px;
-    padding: 24px;
   }
+
+  /* footer */
+  footer {
+    border-top: 1px solid var(--rule);
+    padding: 14px 24px;
+    color: var(--fg-faint);
+    font-size: 11px;
+    text-align: center;
+  }
+  footer code { color: var(--fg-dim); }
 </style>
 </head>
 <body>
+
 <header>
-  <h1>webterm</h1>
-  <nav>
-    <button class="ghost" onclick="load()">refresh</button>
-    <a id="chooser-link" href="#">TUI chooser &rarr;</a>
-  </nav>
+  <div class="brand"><span class="prompt">$</span>kit</div>
+  <span class="meta" id="meta-line"></span>
 </header>
+
+<nav class="tabs" id="tabs">
+  <a href="#webterm"  data-tab="webterm"><span class="key">1</span>webterm</a>
+  <a href="#services" data-tab="services"><span class="key">2</span>services</a>
+  <a href="#storage"  data-tab="storage"><span class="key">3</span>storage</a>
+  <a href="#media"    data-tab="media"><span class="key">4</span>media</a>
+</nav>
+
 <main>
-  <form class="controls" onsubmit="return openSession(event)">
-    <input id="new-name" placeholder="open or create session by name" autocomplete="off" autofocus>
-    <button type="submit" class="primary">open</button>
-  </form>
-  <div id="error" hidden></div>
-  <section id="playbooks"></section>
-  <section id="sessions"></section>
+  <div id="error" class="err" hidden></div>
+
+  <!-- ========== webterm ========== -->
+  <section id="tab-webterm" class="tab-content">
+    <div class="row-title">Claude playbooks</div>
+    <div id="playbooks-list"></div>
+
+    <div class="row-title">tmux sessions</div>
+    <div id="sessions-list"></div>
+    <form class="controls" onsubmit="return openSession(event)">
+      <input id="new-name" placeholder="open or create session by name" autocomplete="off">
+      <button type="submit">open</button>
+    </form>
+  </section>
+
+  <!-- ========== services ========== -->
+  <section id="tab-services" class="tab-content">
+    <div id="services-list"></div>
+  </section>
+
+  <!-- ========== storage ========== -->
+  <section id="tab-storage" class="tab-content">
+    <div id="storage-list"></div>
+  </section>
+
+  <!-- ========== media ========== -->
+  <section id="tab-media" class="tab-content">
+    <div id="media-list"></div>
+  </section>
 </main>
-<footer>auto-refreshes when this tab regains focus</footer>
+
+<footer>
+  press <code>1</code>–<code>4</code> to switch tabs · auto-refreshes when tab regains focus
+</footer>
+
 <script>
-  let chooserUrl = '';
+  // ---------- helpers ----------
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
-  // Page mode based on URL: 'all' shows both sections, 'playbook' shows only
-  // playbooks, 'tmux' shows only sessions. Read once at boot so the section
-  // visibility persists across refreshes (load() doesn't touch it).
-  const pageMode = (() => {
-    const p = window.location.pathname;
-    if (p === '/playbook' || p.startsWith('/playbook/')) return 'playbook';
-    if (p === '/tmux' || p.startsWith('/tmux/')) return 'tmux';
-    return 'all';
-  })();
+  function humanAgo(unixSec) {
+    if (!unixSec) return '';
+    const d = Date.now() / 1000 - unixSec;
+    if (d < 60)    return 'just now';
+    if (d < 3600)  return Math.floor(d / 60)    + 'm ago';
+    if (d < 86400) return Math.floor(d / 3600)  + 'h ago';
+    return Math.floor(d / 86400) + 'd ago';
+  }
 
-  function applyPageMode() {
-    const pb = document.getElementById('playbooks');
-    const ss = document.getElementById('sessions');
-    const form = document.querySelector('.controls');
-    if (pageMode === 'playbook') {
-      ss.style.display = 'none';
-      form.style.display = 'none';
-      document.title = 'webterm playbooks';
-    } else if (pageMode === 'tmux') {
-      pb.style.display = 'none';
-      document.title = 'webterm tmux';
+  // ---------- tabs ----------
+  const TABS = ['webterm', 'services', 'storage', 'media'];
+
+  function setActiveTab(name) {
+    if (!TABS.includes(name)) name = 'webterm';
+    document.querySelectorAll('nav.tabs a').forEach(a => {
+      a.classList.toggle('active', a.dataset.tab === name);
+    });
+    document.querySelectorAll('.tab-content').forEach(s => {
+      s.classList.toggle('active', s.id === 'tab-' + name);
+    });
+    if (window.location.hash !== '#' + name) {
+      history.replaceState(null, '', '#' + name);
     }
   }
 
+  document.querySelectorAll('nav.tabs a').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      setActiveTab(a.dataset.tab);
+    });
+  });
+  window.addEventListener('hashchange', () => {
+    setActiveTab(window.location.hash.replace('#', ''));
+  });
+  window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT') return;
+    const n = parseInt(e.key, 10);
+    if (n >= 1 && n <= TABS.length) setActiveTab(TABS[n - 1]);
+  });
+
+  // ---------- renderers ----------
+  function renderPlaybooks(playbooks) {
+    const el = $('playbooks-list');
+    if (!playbooks.length) {
+      el.innerHTML = '<div class="empty">no Claude playbooks discovered<div class="hint">add one under <code>~/.claude-playbooks/&lt;name&gt;/CLAUDE.md</code> and re-run <code>./install.sh</code></div></div>';
+      return;
+    }
+    el.innerHTML = playbooks.map(p => {
+      const dotClass = p.running ? 'green' : '';
+      const pill = p.running ? '<span class="pill green">running</span>' : '<span class="pill">idle</span>';
+      const ago = humanAgo(p.lastActive);
+      return `<a class="card" href="${esc(p.url)}">
+        <div class="row1">
+          <span><span class="dot ${dotClass}"></span><span class="name">${esc(p.name)}</span></span>
+          <span class="meta">${pill}${ago ? ' · ' + esc(ago) : ''}</span>
+        </div>
+      </a>`;
+    }).join('');
+  }
+
+  function renderSessions(sessions) {
+    const el = $('sessions-list');
+    if (!sessions.length) {
+      el.innerHTML = '<div class="empty">no tmux sessions running<div class="hint">type a name below to create one</div></div>';
+      return;
+    }
+    el.innerHTML = sessions.map(s => {
+      // Bypass /tmux/<name>/ (Caddy regex can't capture across slashes) and
+      // hand the raw, encoded name straight to the chooser.
+      const url = '/chooser/?arg=' + encodeURIComponent(s.name);
+      const dotClass = s.attached > 0 ? 'green' : '';
+      const pill = s.attached > 0
+        ? `<span class="pill green">attached×${s.attached}</span>`
+        : '<span class="pill">idle</span>';
+      const wins = s.windows + ' window' + (s.windows === 1 ? '' : 's');
+      const cmds = (s.panes || []).map(p => p.command).filter(Boolean).slice(0, 3).join(', ');
+      return `<a class="card" href="${esc(url)}">
+        <div class="row1">
+          <span><span class="dot ${dotClass}"></span><span class="name">${esc(s.name)}</span></span>
+          <span class="meta">${pill} · ${esc(wins)}</span>
+        </div>
+        ${cmds ? `<div class="desc">${esc(cmds)}</div>` : ''}
+      </a>`;
+    }).join('');
+  }
+
+  function renderServiceTab(category, services) {
+    const idMap = { services: 'services-list', storage: 'storage-list', media: 'media-list' };
+    const el = $(idMap[category]);
+    if (!el) return;
+    const filtered = services.filter(s => (s.category || 'services') === category);
+    if (!filtered.length) {
+      el.innerHTML = `<div class="empty">no <code>${category}</code> services configured<div class="hint">add one to <code>~/.webterm-kit/services.json</code> and re-run <code>./install.sh</code></div></div>`;
+      return;
+    }
+    el.innerHTML = filtered.map(s => {
+      const url = s.url || '#';
+      const icon = s.icon ? `<span class="icon">${esc(s.icon)}</span>` : '';
+      const desc = s.description ? `<div class="desc">${esc(s.description)}</div>` : '';
+      const proxy = s.proxy_to ? `<span class="meta">${esc(s.proxy_to)}</span>` : '';
+      return `<a class="card" href="${esc(url)}">
+        <div class="row1">
+          <span>${icon}<span class="name">${esc(s.name)}</span></span>
+          ${proxy}
+        </div>
+        ${desc}
+      </a>`;
+    }).join('');
+  }
+
+  // ---------- data load ----------
   async function load() {
-    const errEl = document.getElementById('error');
+    const errEl = $('error');
     try {
-      const res = await fetch('/api/sessions');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      chooserUrl = data.chooserUrl || '';
-      document.getElementById('chooser-link').href = chooserUrl || '#';
-      renderPlaybooks(data.playbooks || []);
-      render(data.sessions || []);
+      const [sessRes, svcRes] = await Promise.all([
+        fetch('/api/sessions'),
+        fetch('/api/services'),
+      ]);
+      if (!sessRes.ok) throw new Error('sessions: HTTP ' + sessRes.status);
+      if (!svcRes.ok)  throw new Error('services: HTTP ' + svcRes.status);
+      const sess = await sessRes.json();
+      const svc  = await svcRes.json();
+      renderPlaybooks(sess.playbooks || []);
+      renderSessions(sess.sessions || []);
+      const services = svc.services || [];
+      renderServiceTab('services', services);
+      renderServiceTab('storage',  services);
+      renderServiceTab('media',    services);
       errEl.hidden = true;
+      $('meta-line').textContent =
+        `${(sess.sessions || []).length} sessions · ${(sess.playbooks || []).length} playbooks · ${services.length} services`;
     } catch (e) {
-      errEl.textContent = 'failed to load sessions: ' + e.message;
+      errEl.textContent = 'load failed: ' + e.message;
       errEl.hidden = false;
     }
   }
 
-  function renderPlaybooks(playbooks) {
-    const el = document.getElementById('playbooks');
-    if (!playbooks.length) { el.innerHTML = ''; return; }
-    el.innerHTML = '<div class="section-title">Claude playbooks</div>'
-      + playbooks.map(p => {
-          const status = p.running
-            ? '<span class="badge running">running</span>'
-            : '<span class="badge idle">idle</span>';
-          const ago = p.lastActive ? humanAgo(p.lastActive) : '';
-          const subtitle = ago
-            ? '<ul class="panes"><li><span class="cmd">last active</span> &mdash; ' + ago + '</li></ul>'
-            : '';
-          return '<a class="session" href="' + esc(p.url) + '">'
-            + '<div class="session-head">'
-            + '<span class="session-name">' + esc(p.name) + '</span>'
-            + '<span class="badges"><span class="badge playbook">playbook</span>' + status + '</span>'
-            + '</div>'
-            + subtitle
-            + '</a>';
-        }).join('');
-  }
-
-  function humanAgo(unixSec) {
-    const d = Date.now() / 1000 - unixSec;
-    if (d < 60) return 'just now';
-    if (d < 3600) return Math.floor(d / 60) + 'm ago';
-    if (d < 86400) return Math.floor(d / 3600) + 'h ago';
-    return Math.floor(d / 86400) + 'd ago';
-  }
-
-  function render(sessions) {
-    const list = document.getElementById('sessions');
-    if (!sessions.length) {
-      list.innerHTML = '<div class="section-title">tmux sessions</div>'
-        + '<div class="empty">no tmux sessions yet &mdash; type a name above to start one</div>';
-      return;
-    }
-    list.innerHTML = '<div class="section-title">tmux sessions</div>' + sessions.map(s => {
-      // Slashed session names can't go through /tmux/<name>/ — Caddy's regex
-      // matcher doesn't allow / inside the captured name. Always link straight
-      // to /chooser/?arg=<encoded>. The chooser binary URL-decodes argv[1].
-      const url = '/chooser/?arg=' + encodeURIComponent(s.name);
-      const winBadge = '<span class="badge">' + s.windows + ' window' + (s.windows === 1 ? '' : 's') + '</span>';
-      const attachBadge = s.attached > 0
-        ? '<span class="badge attached">attached &times;' + s.attached + '</span>'
-        : '';
-      const panes = (s.panes || []).map(p =>
-        '<li><span class="idx">' + p.window + '.' + p.pane + '</span> '
-        + '<span class="cmd">' + esc(p.command) + '</span>'
-        + (p.title && p.title !== p.command ? ' &mdash; ' + esc(p.title) : '')
-        + '</li>'
-      ).join('');
-      return '<a class="session" href="' + url + '">'
-        + '<div class="session-head">'
-        + '<span class="session-name">' + esc(s.name) + '</span>'
-        + '<span class="badges">' + attachBadge + winBadge + '</span>'
-        + '</div>'
-        + '<ul class="panes">' + panes + '</ul>'
-        + '</a>';
-    }).join('');
-  }
-
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, c => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    })[c]);
-  }
-
   function openSession(e) {
     e.preventDefault();
-    const name = document.getElementById('new-name').value.trim();
+    const name = $('new-name').value.trim();
     if (!name) return false;
-    // Same reason as session card links: bypass Caddy regex for slashed names.
     window.location.href = '/chooser/?arg=' + encodeURIComponent(name);
     return false;
   }
 
-  // After data loads, honor #playbooks / #sessions hashes by scrolling the
-  // matching section into view (Caddy redirects /playbook/ and /tmux/ here).
-  function applyHash() {
-    const h = window.location.hash.replace('#', '');
-    if (h === 'playbooks' || h === 'sessions') {
-      const el = document.getElementById(h);
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }
-
+  // ---------- boot ----------
   document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
-  window.addEventListener('hashchange', applyHash);
-  applyPageMode();
-  load().then(applyHash);
+  setActiveTab(window.location.hash.replace('#', '') || 'webterm');
+  load();
 </script>
 </body>
 </html>

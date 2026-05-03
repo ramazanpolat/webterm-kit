@@ -71,7 +71,7 @@ Per-service `generated/ttyd-<name>.sh` is the script that ttyd execs. ttyd uses 
 
 - **chooser** (port 8020) — `chooser/main.go` Bubble Tea TUI. Two views: tmux sessions + Claude playbooks. Press `p` to toggle. **Auto-attach mode**: argv[1] (set via ttyd `-a` from `?arg=name`) runs `tmux new -A -s <name>` directly and exits on detach. Used by both `/chooser/` and `/tmux/<name>/` (the latter via Caddy redirect).
 - **per-playbook ttyds** (8030+) — one per `~/.claude-playbooks/*/CLAUDE.md`. Each runs `generated/claude-<playbook>.sh` which exports `CLAUDE_CONFIG_DIR` then `exec tmux new -A -s claude-<playbook> claude`. The env is set BEFORE tmux creates the session — critical for reattach to inherit the right config dir. ttyd's `--base-path /playbook/<name>/` matches the Caddy route.
-- **dashboard** (port 8021 by default) — `dashboard/main.go`, plain HTTP, embeds the SPA. Endpoints: `/api/sessions` (sessions + playbooks + chooserUrl), `/api/status` (compact `[{playbook, running, lastActive, pid}]` for widgets).
+- **dashboard** (port 8021 by default) — `dashboard/main.go`, plain HTTP, embeds the SPA. Endpoints: `/api/sessions` (sessions + playbooks + chooserUrl), `/api/services` (parsed from `~/.webterm-kit/services.json`), `/api/status` (compact `[{playbook, running, lastActive, pid}]` for widgets).
 
 **Removed in v2.1:** the standalone `tmux` ttyd (port 8022) running `tmux new -A -s main` — `/tmux/` is now a Caddy alias for `/chooser/`, so the dedicated ttyd was redundant. install.sh boots out the v2.0 service if it finds one.
 
@@ -93,11 +93,27 @@ Caddy uses the Tailscale-issued cert via `tls <cert> <key>`. `auto_https off` so
 
 ### 3. SPA — read-only launcher (no terminal in-page)
 
-`dashboard/static/index.html` — vanilla JS, no toolchain. Renders two sections:
-- **Claude playbooks** — cards link to `/<playbook>/` directly (each playbook has its own ttyd).
-- **tmux sessions** — cards link to `<chooserUrl>/?arg=<sessionName>` which the chooser ttyd forwards as argv to the chooser binary.
+`dashboard/static/index.html` — vanilla JS, no toolchain. **Tabbed UI** (v3) with four tabs (`webterm`, `services`, `storage`, `media`). Number keys 1-4 jump between tabs; URL hash deep-links (`#services`).
+
+- **webterm** (default tab) — Claude playbooks + tmux sessions, with the "open or create session" form. Cards link to `/playbook/<name>/` (per-playbook ttyd) or `/chooser/?arg=<name>` (chooser auto-attach).
+- **services / storage / media** — driven by `~/.webterm-kit/services.json`. Each entry's `category` field decides which tab it lands in (default `services`). Cards link to the service's `url`, which is either a local proxied path (e.g. `/jellyfin/`) or an external URL.
 
 The dashboard is a launcher, not a multiplexer.
+
+### Services file (`~/.webterm-kit/services.json`)
+
+```json
+{
+  "services": [
+    { "name": "jellyfin", "category": "media", "icon": "🎬",
+      "url": "/jellyfin/", "proxy_to": "127.0.0.1:8096" }
+  ]
+}
+```
+
+Schema: `name` (required), `description`, `category` (`services|storage|media`, default `services`), `icon` (emoji), `url` (path or full URL), `proxy_to` (`host:port` — if set together with a `/path` url, install.sh adds a Caddy `reverse_proxy` block so the service lives under the same hostname).
+
+`install.sh` seeds an empty `services.json` on first run and parses it (via `python3`) on every run to generate Caddy routes. `services.example.json` in the repo shows realistic entries.
 
 ### Playbook discovery
 

@@ -1,0 +1,44 @@
+{
+  "_comment_about_this_file": "Schema example for ~/.webterm-kit/services.json. Copy entries you want into the live file. Re-run install.sh to apply.",
+  "_schema": {
+    "name":        "shown on the card (string, required)",
+    "description": "subtitle text (string, optional)",
+    "category":    "tab to render under: services | storage | media (default: services)",
+    "icon":        "emoji or single char shown left of name (string, optional)",
+    "url":         "where the card links to. Use a /path for proxied services or a https://… URL for external ones (string, required to be useful)",
+    "proxy_to":    "host:port the local backend listens on. If set together with a /path url, install.sh adds a Caddy reverse_proxy block (string, optional)"
+  },
+  "services": [
+    {
+      "name": "filebrowser",
+      "description": "browse and download files on the Mac",
+      "category": "storage",
+      "icon": "📁",
+      "url": "/files/",
+      "proxy_to": "127.0.0.1:8082"
+    },
+    {
+      "name": "jellyfin",
+      "description": "media library",
+      "category": "media",
+      "icon": "🎬",
+      "url": "/jellyfin/",
+      "proxy_to": "127.0.0.1:8096"
+    },
+    {
+      "name": "glances",
+      "description": "system stats",
+      "category": "services",
+      "icon": "📊",
+      "url": "/glances/",
+      "proxy_to": "127.0.0.1:61208"
+    },
+    {
+      "name": "github",
+      "description": "external link example — no proxy, just opens in a tab",
+      "category": "services",
+      "icon": "🐙",
+      "url": "https://github.com/ramazanpolat"
+    }
+  ]
+}

@@ -69,6 +69,8 @@ prompt TAILNET_HOST  "Tailnet hostname (e.g. mymac.tailXXXX.ts.net)"  "$default_
 prompt BIND_IP       "Bind IP for Caddy (your tailnet IP)"             "$default_ip"
 prompt LABEL_PREFIX  "launchd label prefix"                            "com.webterm"
 PLAYBOOKS_DIR="${PLAYBOOKS_DIR:-$HOME/.claude-playbooks}"
+SERVICES_DIR="${SERVICES_DIR:-$HOME/.webterm-kit}"
+SERVICES_FILE="$SERVICES_DIR/services.json"
 
 [[ -n "$TAILNET_HOST" ]] || die "TAILNET_HOST is required"
 [[ -n "$BIND_IP"     ]] || die "BIND_IP is required"
@@ -112,6 +114,21 @@ if [[ -d "$PLAYBOOKS_DIR" ]]; then
     [[ "$name" == *"/"* ]] && die "playbook name '$name' contains '/' — invalid"
     PLAYBOOKS+=("$name")
   done
+fi
+
+# --- seed services.json if missing ---
+# Empty by default; user adds services with `proxy_to` + `url` + `category` and
+# re-runs install.sh. The dashboard reads this file at runtime; install.sh
+# reads it to generate Caddy reverse_proxy blocks for any service with proxy_to.
+if [[ ! -f "$SERVICES_FILE" ]]; then
+  mkdir -p "$SERVICES_DIR"
+  cat > "$SERVICES_FILE" <<'EOF'
+{
+  "$schema": "see services.example.json in the webterm-kit repo for the schema",
+  "services": []
+}
+EOF
+  say "created empty services file at $SERVICES_FILE"
 fi
 
 # --- show what we'll do ---
@@ -222,6 +239,7 @@ sed -e "s|__DASHBOARD_BIN__|$ROOT/dashboard/dashboard|g" \
     -e "s|__PORT__|$DASHBOARD_PORT|g" \
     -e "s|__CHOOSER_URL__|$chooser_url|g" \
     -e "s|__PLAYBOOKS_DIR__|$PLAYBOOKS_DIR|g" \
+    -e "s|__SERVICES_FILE__|$SERVICES_FILE|g" \
     -e "s|__TAILNET_HOST__|$TAILNET_HOST|g" \
     "$ROOT/templates/dashboard.sh.tmpl" > "$script"
 chmod +x "$script"
@@ -250,6 +268,42 @@ for pb in "${PLAYBOOKS[@]}"; do
   playbook_routes+="		reverse_proxy 127.0.0.1:$port"$'\n'
   playbook_routes+="	}"$'\n\n'
 done
+
+# --- service routes (from services.json) ---
+# Each service with both `proxy_to` and `url` (a path starting with /) gets a
+# Caddy reverse_proxy block. Services with only `url` (e.g. external links) are
+# launcher-cards-only — no Caddy entry. Uses python3 (ships with macOS) to
+# parse the JSON; we'd add a jq prereq if Python ever stops being a given.
+service_routes=""
+if [[ -f "$SERVICES_FILE" ]] && command -v python3 >/dev/null; then
+  service_routes=$(python3 - <<EOF
+import json, sys
+try:
+    data = json.load(open("$SERVICES_FILE"))
+except Exception as e:
+    print(f"# WARN: services.json failed to parse: {e}", file=sys.stderr)
+    sys.exit(0)
+out = []
+for s in data.get("services", []):
+    name = s.get("name", "?")
+    proxy = s.get("proxy_to", "")
+    path = s.get("url", "")
+    if not proxy or not path or not path.startswith("/"):
+        continue
+    if not path.endswith("/"):
+        path += "/"
+    out.append(f"\t# Service: {name}")
+    out.append(f"\thandle {path}* {{")
+    out.append(f"\t\treverse_proxy {proxy}")
+    out.append(f"\t}}")
+    out.append("")
+print("\n".join(out))
+EOF
+)
+  if [[ -n "$service_routes" ]]; then
+    playbook_routes+="$service_routes"$'\n'
+  fi
+fi
 
 caddyfile="$GENERATED_DIR/Caddyfile"
 # Multi-line replacement: write the rendered routes block to a temp file, then
