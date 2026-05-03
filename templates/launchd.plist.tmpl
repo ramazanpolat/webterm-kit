@@ -18,6 +18,13 @@
         <string>__USER_HOME__</string>
         <key>TMPDIR</key>
         <string>__TMPDIR__</string>
+        <!-- launchd inherits no locale by default → child processes see LANG="" /
+             "C", which makes Claude Code (and many TUIs) fall back to ASCII —
+             that's why box-drawing/blocks rendered as `_` in the browser. -->
+        <key>LANG</key>
+        <string>en_US.UTF-8</string>
+        <key>LC_ALL</key>
+        <string>en_US.UTF-8</string>
     </dict>
     <key>RunAtLoad</key>
     <true/>
