@@ -428,7 +428,17 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] != "" {
 		name := decodeArg(os.Args[1])
 		if err := runChild("tmux", "new", "-A", "-s", name); err == nil {
-			return
+			// tmux exited cleanly — user Ctrl-D'd or the session was killed.
+			// Block here instead of returning. If we returned, ttyd would see
+			// the chooser exit and offer "Press Enter to Reconnect", and the
+			// reconnect would silently `tmux new -A` a fresh session with the
+			// same name — which looks to the user like the killed session
+			// "came back". Blocking parks the WebSocket: the user closes the
+			// tab to give up, or refreshes to deliberately start over.
+			fmt.Print("\r\n\r\n")
+			fmt.Printf("\033[33msession '%s' ended.\033[0m\r\n", name)
+			fmt.Print("\033[2mclose this tab, or refresh to start a fresh session.\033[0m\r\n")
+			select {} // block until ttyd sends SIGTERM (tab closed)
 		}
 		notice = fmt.Sprintf("could not attach/create %q — pick another", name)
 	}
