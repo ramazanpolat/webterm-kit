@@ -45,17 +45,22 @@
     flex-wrap: wrap;
   }
   header .brand {
-    font-weight: 700;
-    font-size: 18px;            /* was 15 */
+    font-size: 16px;
     letter-spacing: 0.01em;
     color: var(--fg);
-  }
-  header .brand .prompt { color: var(--accent); margin-right: 6px; }
-  header .brand .host {
-    color: var(--fg-dim);
     font-weight: 400;
-    margin-left: 8px;
-    font-size: 14px;
+  }
+  header .brand .ctx {
+    color: var(--fg-dim);
+    /* user@host : ~  rendered like a real shell prompt */
+  }
+  header .brand .prompt {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  header .brand .cmd {
+    color: var(--fg);
+    font-weight: 700;
   }
 
   /* system stats bar — lives in the header on the right */
@@ -260,8 +265,8 @@
 <body>
 
 <header>
-  <div class="brand">
-    <span class="prompt">$</span>kit<span class="host" id="hostname"></span>
+  <div class="brand" id="brand">
+    <span class="ctx" id="brand-ctx">user@host:~</span><span class="prompt"> $ </span><span class="cmd">kit</span>
   </div>
   <div class="sysbar" id="sysbar">
     <span class="stat" id="sys-cpu"><span class="label">cpu</span><span class="val">—</span></span>
@@ -509,6 +514,15 @@
       setStat('sys-load', s.load1.toFixed(2),
               levelClass(s.load1, 4, 8));
       setStat('sys-up', fmtUptime(s.uptimeSec));
+      // Build the shell-prompt-style brand: "user@host:~"
+      // Fall back to whatever piece is available so the brand never goes empty.
+      const user = s.user || '';
+      const host = s.host || (window.location.hostname || '').split('.')[0];
+      const cwd  = '~';   // dashboard isn't really IN a directory; ~ is the most prompt-like placeholder
+      const ctx  = (user && host) ? `${user}@${host}:${cwd}`
+                  : host           ? `${host}:${cwd}`
+                  : 'kit';
+      $('brand-ctx').textContent = ctx;
     } catch (e) {}
   }
 
@@ -521,8 +535,6 @@
   loadSystem();
   setInterval(loadSystem, 5000);   // refresh stats every 5s
   setInterval(load, 30000);        // refresh sessions every 30s
-  // Try to show the host name in the brand if Caddy populated it on the request.
-  $('hostname').textContent = window.location.hostname ? '@ ' + window.location.hostname.split('.')[0] : '';
 </script>
 </body>
 </html>

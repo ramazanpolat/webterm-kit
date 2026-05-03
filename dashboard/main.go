@@ -230,8 +230,8 @@ func statusEntries(playbooksDir string) []StatusEntry {
 
 // SystemStats is a cheap snapshot of host vitals shown in the dashboard
 // header bar. Refreshed at most every 3 seconds (cached) regardless of how
-// often the SPA polls. All fields default to 0 if their probe fails — never
-// fatal, never log spam.
+// often the SPA polls. All fields default to zero/empty if their probe fails
+// — never fatal, never log spam.
 type SystemStats struct {
 	CPUPercent  float64 `json:"cpuPct"`
 	RAMUsedGB   float64 `json:"ramUsedGB"`
@@ -240,6 +240,12 @@ type SystemStats struct {
 	DiskTotalGB float64 `json:"diskTotalGB"`
 	Load1       float64 `json:"load1"`
 	UptimeSec   int64   `json:"uptimeSec"`
+	// Identity bits for the shell-prompt-style brand line. Don't change once
+	// the dashboard starts so they're effectively constant; included here so
+	// the SPA can build "user@host:~" without an extra round trip.
+	User string `json:"user"`
+	Host string `json:"host"`
+	Home string `json:"home"`
 }
 
 var (
@@ -259,9 +265,35 @@ func systemStats() SystemStats {
 	s.DiskFreeGB, s.DiskTotalGB = dfStats("/")
 	s.Load1 = loadAvg()
 	s.UptimeSec = uptimeSec()
+	s.User = osUser()
+	s.Host = shortHost()
+	s.Home = os.Getenv("HOME")
 	statsCache = s
 	statsCacheFetched = time.Now()
 	return s
+}
+
+func osUser() string {
+	if u := os.Getenv("USER"); u != "" {
+		return u
+	}
+	if u := os.Getenv("LOGNAME"); u != "" {
+		return u
+	}
+	return ""
+}
+
+func shortHost() string {
+	h, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	// Strip trailing `.local`, `.lan`, etc. and any FQDN suffix — we want the
+	// short label so it matches what the user expects to see.
+	if i := strings.IndexByte(h, '.'); i > 0 {
+		h = h[:i]
+	}
+	return h
 }
 
 // topStats parses one `top -l 1 -n 0 -s 0` invocation for both CPU% and
