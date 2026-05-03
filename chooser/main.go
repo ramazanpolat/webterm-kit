@@ -5,9 +5,11 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -438,7 +440,16 @@ func main() {
 			fmt.Print("\r\n\r\n")
 			fmt.Printf("\033[33msession '%s' ended.\033[0m\r\n", name)
 			fmt.Print("\033[2mclose this tab, or refresh to start a fresh session.\033[0m\r\n")
-			select {} // block until ttyd sends SIGTERM (tab closed)
+			// Block on a signal channel rather than `select{}` — the latter
+			// trips Go's deadlock detector ("all goroutines asleep") because
+			// no goroutine could ever wake the main one. signal.Notify gives
+			// the runtime a real "something might wake us" so it stays quiet,
+			// and ttyd's SIGTERM (sent when the WebSocket closes) wakes us
+			// for a clean exit.
+			sigCh := make(chan os.Signal, 1)
+			signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGINT)
+			<-sigCh
+			return
 		}
 		notice = fmt.Sprintf("could not attach/create %q — pick another", name)
 	}
