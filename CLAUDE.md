@@ -30,6 +30,14 @@ macOS-only kit that exposes terminal sessions and Claude playbooks over a Tailne
 # round-trip on /api/services. Use TAILNET_HOST to override the target.
 ./test/smoke.sh
 
+# Full regression: smoke + Playwright SPA tests. Tier 2 needs Node.
+# First run downloads ~92MB of Chromium; later runs are fast (~5s).
+./test/run-all.sh
+SKIP_BROWSER=1 ./test/run-all.sh   # Tier 1 only
+
+# Exploratory scenarios (terminal/font/Unicode) — for humans or AI agents:
+# test/browser/scenarios.md
+
 # Tear down launchd services + remove generated scripts/plists.
 # Caddy daemon must be removed manually (system-level, sudo required) — see uninstall.sh output.
 ./uninstall.sh
