@@ -22,6 +22,10 @@
 		<string>run</string>
 		<string>--config</string>
 		<string>__CADDYFILE__</string>
+		<!-- --watch: auto-reload Caddy when the Caddyfile changes (e.g. after
+		     re-running install.sh). Caddy debounces and validates before
+		     swapping; if the new config is invalid it keeps running the old. -->
+		<string>--watch</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>

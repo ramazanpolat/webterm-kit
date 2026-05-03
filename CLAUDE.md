@@ -89,6 +89,8 @@ Because playbooks are namespaced under `/playbook/`, no playbook name can collid
 
 Caddy uses the Tailscale-issued cert via `tls <cert> <key>`. `auto_https off` so Caddy doesn't try Let's Encrypt. The plist (`templates/caddy.plist.tmpl`) installs to `/Library/LaunchDaemons/` (system) — needs sudo. install.sh prints the exact `sudo cp` + `sudo launchctl bootstrap system` commands; it does NOT run them.
 
+**Auto-reload on Caddyfile change.** The plist runs `caddy run --config <file> --watch`. Re-running `install.sh` (which re-renders the Caddyfile) is enough to make Caddy pick up new playbooks, port changes, etc. — no Caddy restart needed. Caddy debounces, validates, and keeps the old config running if the new one fails validation, so partial writes during render are safe.
+
 ### 3. SPA — read-only launcher (no terminal in-page)
 
 `dashboard/static/index.html` — vanilla JS, no toolchain. Renders two sections:
