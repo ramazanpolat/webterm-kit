@@ -235,6 +235,60 @@
   }
   .empty .hint { margin-top: 12px; font-size: 12px; }
 
+  /* process table (discover tab) */
+  table.procs {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--fs-small);
+  }
+  table.procs th, table.procs td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: middle;
+  }
+  table.procs th {
+    color: var(--fg-faint);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: var(--fs-tiny);
+    letter-spacing: 0.08em;
+  }
+  table.procs td.port { color: var(--accent); font-weight: 600; }
+  table.procs td.cmd  { color: var(--fg-dim); font-size: var(--fs-tiny); max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.procs tr.kit, table.procs tr.exposed { color: var(--fg-faint); }
+  table.procs tr.kit td, table.procs tr.exposed td { color: var(--fg-faint); }
+  table.procs tr.kit td.port, table.procs tr.exposed td.port { color: var(--fg-faint); }
+
+  .add-btn {
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 4px 10px;
+    border-radius: 4px;
+    font: inherit;
+    font-size: var(--fs-small);
+    cursor: pointer;
+  }
+  .add-btn:hover { background: var(--accent); color: var(--bg); }
+  .add-form {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .add-form input, .add-form select {
+    padding: 4px 8px;
+    background: var(--bg);
+    border: 1px solid var(--rule-bright);
+    border-radius: 3px;
+    color: var(--fg);
+    font: inherit;
+    font-size: var(--fs-small);
+  }
+  .add-form input { width: 100px; }
+  .add-form input:focus, .add-form select:focus { outline: none; border-color: var(--accent); }
+
   /* error banner */
   .err {
     padding: 10px 14px;
@@ -283,6 +337,7 @@
   <a href="#services" data-tab="services"><span class="key">2</span>services</a>
   <a href="#storage"  data-tab="storage"><span class="key">3</span>storage</a>
   <a href="#media"    data-tab="media"><span class="key">4</span>media</a>
+  <a href="#discover" data-tab="discover"><span class="key">5</span>discover</a>
 </nav>
 
 <main>
@@ -315,6 +370,15 @@
   <section id="tab-media" class="tab-content">
     <div id="media-list"></div>
   </section>
+
+  <!-- ========== discover ========== -->
+  <section id="tab-discover" class="tab-content">
+    <div class="row-title">Listening services on this host</div>
+    <div id="proc-help" style="color: var(--fg-dim); font-size: var(--fs-small); margin-bottom: 16px;">
+      Anything bound to a TCP port. Click <code style="color:var(--accent);background:var(--bg-elev);padding:1px 5px;border-radius:3px;">+ add</code> on a row to expose it through Caddy and pin it to a tab.
+    </div>
+    <div id="processes-table"></div>
+  </section>
 </main>
 
 <footer>
@@ -337,7 +401,7 @@
   }
 
   // ---------- tabs ----------
-  const TABS = ['webterm', 'services', 'storage', 'media'];
+  const TABS = ['webterm', 'services', 'storage', 'media', 'discover'];
 
   function setActiveTab(name) {
     if (!TABS.includes(name)) name = 'webterm';
@@ -437,6 +501,110 @@
     }).join('');
   }
 
+  // ---------- discover (processes) ----------
+  function renderProcesses(processes) {
+    const el = $('processes-table');
+    if (!processes.length) {
+      el.innerHTML = '<div class="empty">no listening services found (lsof returned nothing)</div>';
+      return;
+    }
+    const rows = processes.map((p, i) => {
+      let action = '';
+      let trClass = '';
+      if (p.kind === 'kit') {
+        trClass = 'kit';
+        action = '<span style="color:var(--fg-faint);font-size:var(--fs-tiny)">webterm-kit</span>';
+      } else if (p.kind === 'exposed') {
+        trClass = 'exposed';
+        action = `<a href="${esc(p.serviceUrl || '#')}" style="color:var(--green);font-size:var(--fs-small)">✓ exposed</a>`;
+      } else {
+        action = `<button class="add-btn" data-idx="${i}" data-port="${p.port}" data-cmd="${esc(p.command)}">+ add</button>`;
+      }
+      const userCol = `<td>${esc(p.user)}</td>`;
+      return `<tr class="${trClass}" id="proc-row-${i}">
+        <td class="port">${p.port}</td>
+        <td>${esc(p.command)}</td>
+        ${userCol}
+        <td class="cmd" title="${esc(p.cmdline)}">${esc(p.cmdline)}</td>
+        <td id="proc-action-${i}">${action}</td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = `<table class="procs">
+      <thead><tr><th>port</th><th>proc</th><th>user</th><th>cmdline</th><th></th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+    // Wire up "add" buttons.
+    el.querySelectorAll('.add-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const idx = btn.dataset.idx;
+        const port = btn.dataset.port;
+        const cmd  = btn.dataset.cmd;
+        showAddForm(idx, port, cmd);
+      });
+    });
+  }
+
+  function showAddForm(idx, port, defaultName) {
+    const cell = $(`proc-action-${idx}`);
+    const safeDefault = (defaultName || 'svc').replace(/[^a-z0-9-]/gi, '').toLowerCase() || 'svc';
+    cell.innerHTML = `<form class="add-form" onsubmit="return submitAddForm(event, ${idx}, ${port})">
+      <input id="af-name-${idx}" placeholder="name" value="${esc(safeDefault)}" required>
+      <select id="af-cat-${idx}">
+        <option value="services">services</option>
+        <option value="storage">storage</option>
+        <option value="media">media</option>
+      </select>
+      <input id="af-path-${idx}" placeholder="path" value="/${esc(safeDefault)}/" required>
+      <button class="add-btn" type="submit">save</button>
+      <button class="add-btn" type="button" onclick="cancelAddForm(${idx}, ${port}, '${esc(defaultName)}')" style="border-color:var(--rule-bright);color:var(--fg-dim)">cancel</button>
+    </form>`;
+    $(`af-name-${idx}`).focus();
+  }
+  window.cancelAddForm = function(idx, port, cmd) {
+    const cell = $(`proc-action-${idx}`);
+    cell.innerHTML = `<button class="add-btn" data-idx="${idx}" data-port="${port}" data-cmd="${esc(cmd)}">+ add</button>`;
+    cell.querySelector('.add-btn').addEventListener('click', () => showAddForm(idx, port, cmd));
+  };
+  window.submitAddForm = async function(e, idx, port) {
+    e.preventDefault();
+    const name = $(`af-name-${idx}`).value.trim();
+    const category = $(`af-cat-${idx}`).value;
+    const path = $(`af-path-${idx}`).value.trim();
+    if (!name || !path) return false;
+    try {
+      const r = await fetch('/api/services', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name, category, url: path,
+          proxy_to: '127.0.0.1:' + port,
+        }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        alert('add failed: ' + txt);
+        return false;
+      }
+      // Reload everything: processes (now annotated as exposed) + services tabs.
+      await loadProcesses();
+      await load();
+    } catch (err) {
+      alert('add failed: ' + err.message);
+    }
+    return false;
+  };
+
+  async function loadProcesses() {
+    try {
+      const r = await fetch('/api/processes');
+      if (!r.ok) return;
+      const d = await r.json();
+      renderProcesses(d.processes || []);
+    } catch (e) {
+      $('processes-table').innerHTML = '<div class="empty">failed to load processes: ' + esc(e.message) + '</div>';
+    }
+  }
+
   // ---------- data load ----------
   async function load() {
     const errEl = $('error');
@@ -528,13 +696,15 @@
 
   // ---------- boot ----------
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) { load(); loadSystem(); }
+    if (!document.hidden) { load(); loadSystem(); loadProcesses(); }
   });
   setActiveTab(window.location.hash.replace('#', '') || 'webterm');
   load();
   loadSystem();
+  loadProcesses();
   setInterval(loadSystem, 5000);   // refresh stats every 5s
   setInterval(load, 30000);        // refresh sessions every 30s
+  setInterval(loadProcesses, 30000); // refresh discover tab every 30s
 </script>
 </body>
 </html>

@@ -14,6 +14,7 @@ USER_HOME=$HOME
 UID_VAL=$(id -u)
 LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 GENERATED_DIR="$ROOT/generated"
+CADDYFILE_PATH="$GENERATED_DIR/Caddyfile"
 
 # tmux puts its socket under $TMPDIR/tmux-$UID/. macOS launchd hands each service
 # a private TMPDIR, so without this our services would talk to a different tmux
@@ -240,6 +241,7 @@ sed -e "s|__DASHBOARD_BIN__|$ROOT/dashboard/dashboard|g" \
     -e "s|__CHOOSER_URL__|$chooser_url|g" \
     -e "s|__PLAYBOOKS_DIR__|$PLAYBOOKS_DIR|g" \
     -e "s|__SERVICES_FILE__|$SERVICES_FILE|g" \
+    -e "s|__CADDYFILE__|$CADDYFILE_PATH|g" \
     -e "s|__TAILNET_HOST__|$TAILNET_HOST|g" \
     "$ROOT/templates/dashboard.sh.tmpl" > "$script"
 chmod +x "$script"
@@ -274,9 +276,13 @@ done
 # Caddy reverse_proxy block. Services with only `url` (e.g. external links) are
 # launcher-cards-only — no Caddy entry. Uses python3 (ships with macOS) to
 # parse the JSON; we'd add a jq prereq if Python ever stops being a given.
-service_routes=""
+#
+# The whole block is wrapped in BEGIN/END sentinel comments so the dashboard
+# can rewrite just this region when the user adds a service via /api/services
+# (POST). install.sh always emits the sentinels, even with zero services.
+service_inner=""
 if [[ -f "$SERVICES_FILE" ]] && command -v python3 >/dev/null; then
-  service_routes=$(python3 - <<EOF
+  service_inner=$(python3 - <<EOF
 import json, sys
 try:
     data = json.load(open("$SERVICES_FILE"))
@@ -300,12 +306,12 @@ for s in data.get("services", []):
 print("\n".join(out))
 EOF
 )
-  if [[ -n "$service_routes" ]]; then
-    playbook_routes+="$service_routes"$'\n'
-  fi
 fi
+service_routes="# === BEGIN: webterm-kit auto-generated services ==="$'\n'
+service_routes+="$service_inner"
+service_routes+="# === END: webterm-kit auto-generated services ==="$'\n'
+playbook_routes+="$service_routes"$'\n'
 
-caddyfile="$GENERATED_DIR/Caddyfile"
 # Multi-line replacement: write the rendered routes block to a temp file, then
 # sed's `r` reads it in at the sentinel line and `d` drops the sentinel itself.
 # (BSD awk on macOS won't accept newlines inside `-v` variables, so we use sed.)
@@ -320,14 +326,14 @@ sed -e "/__PLAYBOOK_ROUTES__/r $routes_tmp" -e "/__PLAYBOOK_ROUTES__/d" "$ROOT/t
         -e "s|__DASHBOARD_PORT__|$DASHBOARD_PORT|g" \
         -e "s|__USER_HOME__|$USER_HOME|g" \
         -e "s|__LABEL_PREFIX__|$LABEL_PREFIX|g" \
-  > "$caddyfile"
+  > "$CADDYFILE_PATH"
 rm -f "$routes_tmp"
 
 if $HAS_CADDY; then
-  if caddy validate --config "$caddyfile" >/dev/null 2>&1; then
+  if caddy validate --config "$CADDYFILE_PATH" >/dev/null 2>&1; then
     say "Caddyfile validates"
   else
-    warn "Caddyfile failed caddy validate — see: caddy validate --config $caddyfile"
+    warn "Caddyfile failed caddy validate — see: caddy validate --config $CADDYFILE_PATH"
   fi
 fi
 
@@ -337,7 +343,7 @@ caddy_plist_src="$GENERATED_DIR/$caddy_label.plist"
 caddy_bin=$(command -v caddy 2>/dev/null || echo "/opt/homebrew/bin/caddy")
 sed -e "s|__LABEL__|$caddy_label|g" \
     -e "s|__CADDY_BIN__|$caddy_bin|g" \
-    -e "s|__CADDYFILE__|$caddyfile|g" \
+    -e "s|__CADDYFILE__|$CADDYFILE_PATH|g" \
     -e "s|__USER_HOME__|$USER_HOME|g" \
     "$ROOT/templates/caddy.plist.tmpl" > "$caddy_plist_src"
 plutil -lint "$caddy_plist_src" >/dev/null
@@ -393,7 +399,7 @@ printf "  sudo cp '%s' /Library/LaunchDaemons/%s.plist\n" "$caddy_plist_src" "$c
 printf "  sudo chown root:wheel /Library/LaunchDaemons/%s.plist\n" "$caddy_label"
 printf "  sudo launchctl bootstrap system /Library/LaunchDaemons/%s.plist\n\n" "$caddy_label"
 printf "Or run Caddy in the foreground for testing (--watch auto-reloads on Caddyfile changes):\n"
-printf "  sudo caddy run --config '%s' --watch\n\n" "$caddyfile"
+printf "  sudo caddy run --config '%s' --watch\n\n" "$CADDYFILE_PATH"
 printf "Once Caddy is up:\n"
 printf "  https://%s/                       dashboard (everything)\n"                "$TAILNET_HOST"
 printf "  https://%s/chooser/               TUI picker (sessions + playbooks)\n"     "$TAILNET_HOST"

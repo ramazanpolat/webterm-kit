@@ -62,6 +62,200 @@ type Service struct {
 	ProxyTo     string `json:"proxy_to,omitempty"` // backend like 127.0.0.1:8096 (used by install.sh)
 }
 
+// Process is a single listening TCP service discovered via lsof on the host.
+// We surface them in the "discover" tab so the user can add unknown services
+// (e.g. `opencode --web`) to the dashboard with one click.
+type Process struct {
+	PID        int    `json:"pid"`
+	Command    string `json:"command"`    // short binary name from lsof
+	Cmdline    string `json:"cmdline"`    // full command line from `ps`
+	User       string `json:"user"`
+	Bind       string `json:"bind"`       // 127.0.0.1, *, ::1, etc.
+	Port       int    `json:"port"`
+	Kind       string `json:"kind"`       // "kit" if it's our own infra, "exposed" if already in services.json, "" otherwise
+	ServiceURL string `json:"serviceUrl,omitempty"` // path under Caddy if Kind == "exposed"
+}
+
+// listProcesses runs `lsof -nP -iTCP -sTCP:LISTEN` and parses each row into
+// a Process. For each PID it then runs `ps -o command=` once to get the full
+// command line (lsof only gives us the basename). Annotates ownership against
+// the loaded services list so the SPA can dim already-exposed rows.
+func listProcesses(services []Service) []Process {
+	out, err := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN").Output()
+	if err != nil {
+		return []Process{}
+	}
+	// Build a port→service map for the "exposed" annotation. We match on the
+	// service's ProxyTo port (last colon-separated chunk).
+	exposedByPort := map[int]Service{}
+	for _, s := range services {
+		if s.ProxyTo == "" {
+			continue
+		}
+		if i := strings.LastIndex(s.ProxyTo, ":"); i > 0 {
+			var p int
+			fmt.Sscanf(s.ProxyTo[i+1:], "%d", &p)
+			if p > 0 {
+				exposedByPort[p] = s
+			}
+		}
+	}
+
+	// Cache cmdline lookups to avoid running `ps` twice for the same PID
+	// (lsof can list a process more than once with different FDs).
+	cmdCache := map[int]string{}
+	getCmdline := func(pid int) string {
+		if v, ok := cmdCache[pid]; ok {
+			return v
+		}
+		o, err := exec.Command("ps", "-o", "command=", "-p", fmt.Sprint(pid)).Output()
+		if err != nil {
+			cmdCache[pid] = ""
+			return ""
+		}
+		v := strings.TrimSpace(string(o))
+		cmdCache[pid] = v
+		return v
+	}
+
+	var procs []Process
+	seen := map[string]bool{} // dedupe by pid:port
+	for i, line := range strings.Split(string(out), "\n") {
+		if i == 0 || line == "" {
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) < 9 {
+			continue
+		}
+		// Layout: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME [(LISTEN)]
+		var pid int
+		fmt.Sscanf(f[1], "%d", &pid)
+		// NAME column (always second-to-last when "(LISTEN)" trails) looks like
+		// "127.0.0.1:8020" or "*:443" or "[::1]:8021".
+		nameCol := f[len(f)-2]
+		colon := strings.LastIndex(nameCol, ":")
+		if colon < 0 {
+			continue
+		}
+		bind := strings.Trim(nameCol[:colon], "[]")
+		var port int
+		fmt.Sscanf(nameCol[colon+1:], "%d", &port)
+		if port == 0 {
+			continue
+		}
+		key := fmt.Sprintf("%d:%d", pid, port)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		p := Process{
+			PID:     pid,
+			Command: f[0],
+			User:    f[2],
+			Bind:    bind,
+			Port:    port,
+			Cmdline: getCmdline(pid),
+		}
+		// Annotate kind. webterm-kit-owned binaries: ttyd, our chooser, our
+		// dashboard, caddy run with our config. Heuristic — close enough.
+		switch {
+		case p.Command == "ttyd",
+			strings.Contains(p.Cmdline, "webterm-kit"),
+			strings.Contains(p.Cmdline, "/chooser/chooser"),
+			strings.Contains(p.Cmdline, "/dashboard/dashboard"):
+			p.Kind = "kit"
+		}
+		if svc, ok := exposedByPort[port]; ok {
+			p.Kind = "exposed"
+			p.ServiceURL = svc.URL
+		}
+		procs = append(procs, p)
+	}
+	// Stable sort: kit/exposed rows last, "addable" rows first; then by port asc.
+	sort.SliceStable(procs, func(i, j int) bool {
+		ki, kj := rank(procs[i].Kind), rank(procs[j].Kind)
+		if ki != kj {
+			return ki < kj
+		}
+		return procs[i].Port < procs[j].Port
+	})
+	if procs == nil {
+		return []Process{}
+	}
+	return procs
+}
+
+func rank(kind string) int {
+	switch kind {
+	case "":
+		return 0 // addable
+	case "exposed":
+		return 1
+	case "kit":
+		return 2
+	}
+	return 3
+}
+
+// saveServices writes the services list back to disk atomically.
+func saveServices(path string, services []Service) error {
+	wrapper := map[string]any{"services": services}
+	data, err := json.MarshalIndent(wrapper, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// regenerateCaddyfileServices rewrites just the dashboard-managed block of the
+// Caddyfile (between the BEGIN/END sentinels installed by install.sh). Caddy
+// --watch picks up the change and reloads automatically.
+func regenerateCaddyfileServices(caddyfilePath string, services []Service) error {
+	const startMarker = "# === BEGIN: webterm-kit auto-generated services ==="
+	const endMarker = "# === END: webterm-kit auto-generated services ==="
+	data, err := os.ReadFile(caddyfilePath)
+	if err != nil {
+		return err
+	}
+	s := string(data)
+	startIdx := strings.Index(s, startMarker)
+	endIdx := strings.Index(s, endMarker)
+	if startIdx < 0 || endIdx < 0 {
+		return fmt.Errorf("Caddyfile sentinels not found at %s — re-run install.sh", caddyfilePath)
+	}
+	var b strings.Builder
+	b.WriteString(startMarker + "\n")
+	for _, sv := range services {
+		if sv.ProxyTo == "" || !strings.HasPrefix(sv.URL, "/") {
+			continue
+		}
+		path := sv.URL
+		if !strings.HasSuffix(path, "/") {
+			path += "/"
+		}
+		fmt.Fprintf(&b, "\t# Service: %s\n", sv.Name)
+		fmt.Fprintf(&b, "\thandle %s* {\n", path)
+		fmt.Fprintf(&b, "\t\treverse_proxy %s\n", sv.ProxyTo)
+		fmt.Fprintf(&b, "\t}\n\n")
+	}
+	b.WriteString(endMarker)
+	out := s[:startIdx] + b.String() + s[endIdx+len(endMarker):]
+	tmp := caddyfilePath + ".tmp"
+	if err := os.WriteFile(tmp, []byte(out), 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, caddyfilePath)
+}
+
 // loadServices reads the services file. Missing file → empty list (the user
 // just hasn't added any services yet — not an error).
 func loadServices(path string) []Service {
@@ -415,6 +609,7 @@ func main() {
 	chooserURL := flag.String("chooser-url", "", "base URL of the chooser ttyd, e.g. https://host/chooser")
 	playbooksDir := flag.String("playbooks-dir", "", "path to playbooks root (default $HOME/.claude-playbooks)")
 	servicesFile := flag.String("services-file", "", "path to services.json (default $HOME/.webterm-kit/services.json)")
+	caddyfilePath := flag.String("caddyfile", "", "path to the running Caddyfile, so the dashboard can rewrite the services block when adding new entries")
 	flag.Parse()
 
 	if *playbooksDir == "" {
@@ -445,10 +640,88 @@ func main() {
 	})
 
 	mux.HandleFunc("/api/services", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		switch r.Method {
+		case http.MethodGet:
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"services": loadServices(*servicesFile),
+			})
+		case http.MethodPost:
+			var newSvc Service
+			if err := json.NewDecoder(r.Body).Decode(&newSvc); err != nil {
+				http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			newSvc.Name = strings.TrimSpace(newSvc.Name)
+			if newSvc.Name == "" || newSvc.URL == "" {
+				http.Error(w, "name and url are required", http.StatusBadRequest)
+				return
+			}
+			if newSvc.Category == "" {
+				newSvc.Category = "services"
+			}
+			services := loadServices(*servicesFile)
+			for _, s := range services {
+				if s.Name == newSvc.Name {
+					http.Error(w, "service name already exists", http.StatusConflict)
+					return
+				}
+			}
+			services = append(services, newSvc)
+			if err := saveServices(*servicesFile, services); err != nil {
+				http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if *caddyfilePath != "" {
+				if err := regenerateCaddyfileServices(*caddyfilePath, services); err != nil {
+					// Service is saved but Caddy didn't get the route — surface the
+					// problem instead of silently 200-ing.
+					http.Error(w, "service saved but Caddyfile update failed: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(newSvc)
+		case http.MethodDelete:
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if name == "" {
+				http.Error(w, "?name= required", http.StatusBadRequest)
+				return
+			}
+			services := loadServices(*servicesFile)
+			kept := make([]Service, 0, len(services))
+			found := false
+			for _, s := range services {
+				if s.Name == name {
+					found = true
+					continue
+				}
+				kept = append(kept, s)
+			}
+			if !found {
+				http.Error(w, "no such service", http.StatusNotFound)
+				return
+			}
+			if err := saveServices(*servicesFile, kept); err != nil {
+				http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if *caddyfilePath != "" {
+				_ = regenerateCaddyfileServices(*caddyfilePath, kept)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+
+	mux.HandleFunc("/api/processes", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		json.NewEncoder(w).Encode(map[string]any{
-			"services": loadServices(*servicesFile),
+			"processes": listProcesses(loadServices(*servicesFile)),
 		})
 	})
 
