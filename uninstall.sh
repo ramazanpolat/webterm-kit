@@ -33,4 +33,8 @@ if [[ -f "$ROOT/chooser/chooser" ]]; then
   rm -f "$ROOT/chooser/chooser"
 fi
 
+if [[ -f "$ROOT/dashboard/dashboard" ]]; then
+  rm -f "$ROOT/dashboard/dashboard"
+fi
+
 say "done"

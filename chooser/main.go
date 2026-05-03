@@ -201,6 +201,16 @@ func runChild(name string, args ...string) error {
 
 func main() {
 	notice := ""
+	// If invoked with a session name as first arg (e.g. via ttyd -a from the
+	// dashboard), attach-or-create that session directly and skip the picker.
+	// On failure, fall through with a notice.
+	if len(os.Args) > 1 && os.Args[1] != "" {
+		name := os.Args[1]
+		if err := runChild("tmux", "new", "-A", "-s", name); err == nil {
+			return
+		}
+		notice = fmt.Sprintf("could not attach/create %q — pick another", os.Args[1])
+	}
 	for {
 		p := tea.NewProgram(newModel(notice), tea.WithAltScreen())
 		final, err := p.Run()

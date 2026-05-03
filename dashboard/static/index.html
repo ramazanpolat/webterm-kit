@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>webterm dashboard</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --fg: #e6edf3;
+    --dim: #8b949e;
+    --accent: #7d8cf0;
+    --card: #161b22;
+    --border: #30363d;
+    --hover: #1f242c;
+    --attached: #56d364;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 14px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100vh;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  header nav { display: flex; gap: 12px; align-items: center; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  main { padding: 24px; max-width: 960px; margin: 0 auto; }
+  .controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  .controls input {
+    flex: 1;
+    padding: 8px 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--fg);
+    font: inherit;
+  }
+  .controls input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  button {
+    padding: 8px 16px;
+    border-radius: 6px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button.primary {
+    background: var(--accent);
+    color: var(--bg);
+    border: 0;
+    font-weight: 600;
+  }
+  button.ghost {
+    background: transparent;
+    color: var(--dim);
+    border: 1px solid var(--border);
+  }
+  button.ghost:hover { color: var(--fg); border-color: var(--accent); }
+  .session {
+    display: block;
+    padding: 16px 20px;
+    margin-bottom: 12px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: inherit;
+    transition: background .1s, border-color .1s;
+  }
+  .session:hover {
+    background: var(--hover);
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+  .session-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    gap: 12px;
+  }
+  .session-name {
+    font-size: 16px;
+    font-weight: 600;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .badges { display: flex; gap: 6px; flex-shrink: 0; }
+  .badge {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--border);
+    color: var(--dim);
+  }
+  .badge.attached { background: var(--attached); color: var(--bg); font-weight: 600; }
+  .panes {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: var(--dim);
+  }
+  .panes li { padding: 2px 0; }
+  .panes .cmd { color: var(--fg); }
+  .panes .idx { display: inline-block; min-width: 36px; color: var(--dim); }
+  .empty {
+    text-align: center;
+    color: var(--dim);
+    padding: 64px 0;
+  }
+  .error {
+    padding: 12px 16px;
+    background: #4d1f1f;
+    border: 1px solid #8b3a3a;
+    border-radius: 6px;
+    color: #f5b5b5;
+    margin-bottom: 16px;
+  }
+  footer {
+    text-align: center;
+    color: var(--dim);
+    font-size: 12px;
+    padding: 24px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>webterm</h1>
+  <nav>
+    <button class="ghost" onclick="load()">refresh</button>
+    <a id="chooser-link" href="#">TUI chooser &rarr;</a>
+  </nav>
+</header>
+<main>
+  <form class="controls" onsubmit="return openSession(event)">
+    <input id="new-name" placeholder="open or create session by name" autocomplete="off" autofocus>
+    <button type="submit" class="primary">open</button>
+  </form>
+  <div id="error" hidden></div>
+  <div id="list"></div>
+</main>
+<footer>auto-refreshes when this tab regains focus</footer>
+<script>
+  let chooserUrl = '';
+
+  async function load() {
+    const errEl = document.getElementById('error');
+    try {
+      const res = await fetch('/api/sessions');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      chooserUrl = data.chooserUrl || '';
+      document.getElementById('chooser-link').href = chooserUrl || '#';
+      render(data.sessions || []);
+      errEl.hidden = true;
+    } catch (e) {
+      errEl.textContent = 'failed to load sessions: ' + e.message;
+      errEl.hidden = false;
+    }
+  }
+
+  function render(sessions) {
+    const list = document.getElementById('list');
+    if (!sessions.length) {
+      list.innerHTML = '<div class="empty">no tmux sessions yet &mdash; type a name above to start one</div>';
+      return;
+    }
+    list.innerHTML = sessions.map(s => {
+      const url = chooserUrl + '/?arg=' + encodeURIComponent(s.name);
+      const winBadge = '<span class="badge">' + s.windows + ' window' + (s.windows === 1 ? '' : 's') + '</span>';
+      const attachBadge = s.attached > 0
+        ? '<span class="badge attached">attached &times;' + s.attached + '</span>'
+        : '';
+      const panes = (s.panes || []).map(p =>
+        '<li><span class="idx">' + p.window + '.' + p.pane + '</span> '
+        + '<span class="cmd">' + esc(p.command) + '</span>'
+        + (p.title && p.title !== p.command ? ' &mdash; ' + esc(p.title) : '')
+        + '</li>'
+      ).join('');
+      return '<a class="session" href="' + url + '">'
+        + '<div class="session-head">'
+        + '<span class="session-name">' + esc(s.name) + '</span>'
+        + '<span class="badges">' + attachBadge + winBadge + '</span>'
+        + '</div>'
+        + '<ul class="panes">' + panes + '</ul>'
+        + '</a>';
+    }).join('');
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[c]);
+  }
+
+  function openSession(e) {
+    e.preventDefault();
+    const name = document.getElementById('new-name').value.trim();
+    if (!name) return false;
+    if (!chooserUrl) return false;
+    window.location.href = chooserUrl + '/?arg=' + encodeURIComponent(name);
+    return false;
+  }
+
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+  load();
+</script>
+</body>
+</html>
