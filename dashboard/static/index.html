@@ -112,6 +112,18 @@
     color: var(--dim);
   }
   .badge.attached { background: var(--attached); color: var(--bg); font-weight: 600; }
+  .badge.running { background: var(--attached); color: var(--bg); font-weight: 600; }
+  .badge.idle { background: var(--border); color: var(--dim); }
+  .badge.playbook { background: #2d3147; color: #b3befa; }
+  .section-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--dim);
+    margin: 24px 0 12px;
+    font-weight: 600;
+  }
+  .section-title:first-child { margin-top: 0; }
   .panes {
     list-style: none;
     padding: 0;
@@ -158,6 +170,7 @@
     <button type="submit" class="primary">open</button>
   </form>
   <div id="error" hidden></div>
+  <div id="playbooks"></div>
   <div id="list"></div>
 </main>
 <footer>auto-refreshes when this tab regains focus</footer>
@@ -172,6 +185,7 @@
       const data = await res.json();
       chooserUrl = data.chooserUrl || '';
       document.getElementById('chooser-link').href = chooserUrl || '#';
+      renderPlaybooks(data.playbooks || []);
       render(data.sessions || []);
       errEl.hidden = true;
     } catch (e) {
@@ -180,13 +194,44 @@
     }
   }
 
+  function renderPlaybooks(playbooks) {
+    const el = document.getElementById('playbooks');
+    if (!playbooks.length) { el.innerHTML = ''; return; }
+    el.innerHTML = '<div class="section-title">Claude playbooks</div>'
+      + playbooks.map(p => {
+          const status = p.running
+            ? '<span class="badge running">running</span>'
+            : '<span class="badge idle">idle</span>';
+          const ago = p.lastActive ? humanAgo(p.lastActive) : '';
+          const subtitle = ago
+            ? '<ul class="panes"><li><span class="cmd">last active</span> &mdash; ' + ago + '</li></ul>'
+            : '';
+          return '<a class="session" href="' + esc(p.url) + '">'
+            + '<div class="session-head">'
+            + '<span class="session-name">' + esc(p.name) + '</span>'
+            + '<span class="badges"><span class="badge playbook">playbook</span>' + status + '</span>'
+            + '</div>'
+            + subtitle
+            + '</a>';
+        }).join('');
+  }
+
+  function humanAgo(unixSec) {
+    const d = Date.now() / 1000 - unixSec;
+    if (d < 60) return 'just now';
+    if (d < 3600) return Math.floor(d / 60) + 'm ago';
+    if (d < 86400) return Math.floor(d / 3600) + 'h ago';
+    return Math.floor(d / 86400) + 'd ago';
+  }
+
   function render(sessions) {
     const list = document.getElementById('list');
     if (!sessions.length) {
-      list.innerHTML = '<div class="empty">no tmux sessions yet &mdash; type a name above to start one</div>';
+      list.innerHTML = '<div class="section-title">tmux sessions</div>'
+        + '<div class="empty">no tmux sessions yet &mdash; type a name above to start one</div>';
       return;
     }
-    list.innerHTML = sessions.map(s => {
+    list.innerHTML = '<div class="section-title">tmux sessions</div>' + sessions.map(s => {
       const url = chooserUrl + '/?arg=' + encodeURIComponent(s.name);
       const winBadge = '<span class="badge">' + s.windows + ' window' + (s.windows === 1 ? '' : 's') + '</span>';
       const attachBadge = s.attached > 0

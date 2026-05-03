@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# webterm-kit installer. macOS only.
+# webterm-kit installer (v2). macOS only.
 # Run from inside the cloned repo: ./install.sh
+#
+# v2 changes vs v1:
+#   - Auto-discovers playbooks under ~/.claude-playbooks/ (each becomes one
+#     ttyd-backed Claude session, tmux-wrapped for resilience).
+#   - Caddy on :443 fronts everything with path routing — no port to remember.
+#   - Writes ~/.claude-profile/machines/<host>.md so playbooks can @import host info.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
@@ -17,11 +23,12 @@ USER_TMPDIR="${TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || echo /tmp/)
 
 c_red()   { printf "\033[31m%s\033[0m" "$1"; }
 c_green() { printf "\033[32m%s\033[0m" "$1"; }
+c_yellow(){ printf "\033[33m%s\033[0m" "$1"; }
 c_dim()   { printf "\033[2m%s\033[0m" "$1"; }
 
 say()  { printf "%s %s\n" "$(c_green '==>')" "$*"; }
-warn() { printf "%s %s\n" "$(c_red '!!')" "$*" >&2; }
-die()  { warn "$*"; exit 1; }
+warn() { printf "%s %s\n" "$(c_yellow '!!')" "$*" >&2; }
+die()  { printf "%s %s\n" "$(c_red 'XX')" "$*" >&2; exit 1; }
 
 # --- prereqs ---
 check_cmd() { command -v "$1" >/dev/null 2>&1 || die "missing: $1 (try: brew install $1)"; }
@@ -30,6 +37,11 @@ check_cmd tmux
 check_cmd go
 check_cmd launchctl
 [[ "$(uname -s)" == "Darwin" ]] || die "this kit is macOS-only (uses launchd)"
+
+# Caddy is required in v2 (it terminates TLS and routes by path). If missing,
+# stop early with a clear message — we still generate everything else.
+HAS_CADDY=true
+command -v caddy >/dev/null 2>&1 || HAS_CADDY=false
 
 # --- discover or prompt ---
 default_host=""
@@ -42,7 +54,7 @@ fi
 prompt() {
   local var=$1 label=$2 default=$3 val
   if [[ -n "${!var:-}" ]]; then
-    return  # already set in env
+    return
   fi
   if [[ -n "$default" ]]; then
     read -rp "$label [$default]: " val
@@ -54,8 +66,9 @@ prompt() {
 }
 
 prompt TAILNET_HOST  "Tailnet hostname (e.g. mymac.tailXXXX.ts.net)"  "$default_host"
-prompt BIND_IP       "Bind IP for ttyd (your tailnet IP)"             "$default_ip"
+prompt BIND_IP       "Bind IP for Caddy (your tailnet IP)"             "$default_ip"
 prompt LABEL_PREFIX  "launchd label prefix"                            "com.webterm"
+PLAYBOOKS_DIR="${PLAYBOOKS_DIR:-$HOME/.claude-playbooks}"
 
 [[ -n "$TAILNET_HOST" ]] || die "TAILNET_HOST is required"
 [[ -n "$BIND_IP"     ]] || die "BIND_IP is required"
@@ -78,50 +91,76 @@ if [[ ! -f "$CERT_PATH" || ! -f "$KEY_PATH" ]]; then
   fi
 fi
 
-# --- pick services ---
-# Each entry: name:port:command
-SERVICES=(
-  "chooser:8020:$ROOT/chooser/chooser"
-  "tmux:8022:tmux new -A -s main"
-)
-command -v zellij >/dev/null && SERVICES+=("zellij:8023:zellij attach --create main")
-command -v claude >/dev/null && SERVICES+=("claude:8024:tmux new -A -s claude claude")
-
-# Dashboard: standalone HTTPS Go service (not behind ttyd). Empty string disables.
+# --- ports ---
+# Fixed system services keep their ports for backward compat. Playbooks get
+# 8030+. None of these are user-facing — Caddy on :443 is the only public port.
+CHOOSER_PORT=8020
 DASHBOARD_PORT="${DASHBOARD_PORT:-8021}"
+TMUX_PORT=8022
+PLAYBOOK_PORT_BASE=8030
 
-say "services to install:"
-for svc in "${SERVICES[@]}"; do
-  IFS=: read -r name port cmd <<< "$svc"
-  printf "    %-8s port %s  %s\n" "$name" "$port" "$(c_dim "$cmd")"
-done
-if [[ -n "$DASHBOARD_PORT" ]]; then
-  printf "    %-8s port %s  %s\n" "dashboard" "$DASHBOARD_PORT" "$(c_dim "$ROOT/dashboard/dashboard (HTTPS, native Go)")"
+# Reserved path segments. Playbooks named like these would shadow a system route.
+RESERVED_PATHS=(chooser tmux dashboard api static caddy)
+
+# --- discover playbooks ---
+PLAYBOOKS=()
+if [[ -d "$PLAYBOOKS_DIR" ]]; then
+  for d in "$PLAYBOOKS_DIR"/*/; do
+    name=$(basename "$d")
+    [[ -f "$d/CLAUDE.md" ]] || continue
+    for r in "${RESERVED_PATHS[@]}"; do
+      [[ "$name" == "$r" ]] && die "playbook '$name' shadows reserved path '/$r'. Rename in $PLAYBOOKS_DIR/"
+    done
+    PLAYBOOKS+=("$name")
+  done
 fi
+
+# --- show what we'll do ---
+say "system services:"
+printf "    %-12s 127.0.0.1:%s  -> https://%s/chooser/\n"   "chooser"   "$CHOOSER_PORT"   "$TAILNET_HOST"
+printf "    %-12s 127.0.0.1:%s  -> https://%s/tmux/\n"      "tmux"      "$TMUX_PORT"      "$TAILNET_HOST"
+printf "    %-12s 127.0.0.1:%s  -> https://%s/\n"           "dashboard" "$DASHBOARD_PORT" "$TAILNET_HOST"
+
+if (( ${#PLAYBOOKS[@]} > 0 )); then
+  say "playbooks discovered in $PLAYBOOKS_DIR:"
+  i=0
+  for pb in "${PLAYBOOKS[@]}"; do
+    port=$((PLAYBOOK_PORT_BASE + i))
+    printf "    %-12s 127.0.0.1:%s  -> https://%s/%s/\n" "$pb" "$port" "$TAILNET_HOST" "$pb"
+    i=$((i + 1))
+  done
+else
+  warn "no playbooks found in $PLAYBOOKS_DIR (each subdir needs a CLAUDE.md)"
+fi
+
+if ! $HAS_CADDY; then
+  warn "caddy not found — Caddyfile will still be generated, but install it (brew install caddy) before serving"
+fi
+
 read -rp "Proceed? [Y/n]: " yn
 [[ "$yn" =~ ^[Nn] ]] && exit 0
 
 # --- build binaries ---
 say "building chooser binary"
 (cd "$ROOT/chooser" && go build -o chooser .)
-if [[ -n "$DASHBOARD_PORT" ]]; then
-  say "building dashboard binary"
-  (cd "$ROOT/dashboard" && go build -o dashboard .)
-fi
+say "building dashboard binary"
+(cd "$ROOT/dashboard" && go build -o dashboard .)
 
-# --- generate scripts + plists, bootstrap services ---
+# --- helpers ---
 mkdir -p "$GENERATED_DIR" "$LAUNCHD_DIR" "$HOME/Library/Logs"
 
-for svc in "${SERVICES[@]}"; do
-  IFS=: read -r name port cmd <<< "$svc"
-  label="$LABEL_PREFIX.$port"
-  script="$GENERATED_DIR/ttyd-$name.sh"
-  plist="$LAUNCHD_DIR/$label.plist"
+# Render one ttyd service: writes generated/ttyd-<name>.sh + plist, bootstraps launchd.
+# Args: name port base_path command-string
+render_ttyd_service() {
+  local name="$1" port="$2" base_path="$3" cmd="$4"
+  local label="$LABEL_PREFIX.$port"
+  local script="$GENERATED_DIR/ttyd-$name.sh"
+  local plist="$LAUNCHD_DIR/$label.plist"
 
-  sed -e "s|__BIND_IP__|$BIND_IP|g" \
-      -e "s|__PORT__|$port|g" \
-      -e "s|__CERT__|$CERT_PATH|g" \
-      -e "s|__KEY__|$KEY_PATH|g" \
+  # __CMD__ is intentionally NOT quoted in the template so word-splitting works
+  # on the rendered exec line. Keep cmd a single shell-safe string.
+  sed -e "s|__PORT__|$port|g" \
+      -e "s|__BASE_PATH__|$base_path|g" \
       -e "s|__CMD__|$cmd|g" \
       "$ROOT/templates/ttyd.sh.tmpl" > "$script"
   chmod +x "$script"
@@ -132,63 +171,180 @@ for svc in "${SERVICES[@]}"; do
       -e "s|__USER_HOME__|$USER_HOME|g" \
       -e "s|__TMPDIR__|$USER_TMPDIR|g" \
       "$ROOT/templates/launchd.plist.tmpl" > "$plist"
-
   plutil -lint "$plist" >/dev/null
 
-  # idempotent bootstrap
   launchctl bootout "gui/$UID_VAL/$label" 2>/dev/null || true
   launchctl bootstrap "gui/$UID_VAL" "$plist"
-  say "$label installed (script: $script)"
+  say "$label installed"
+}
+
+# --- system ttyd services (chooser + tmux) ---
+render_ttyd_service "chooser" "$CHOOSER_PORT" "/chooser/" "$ROOT/chooser/chooser"
+render_ttyd_service "tmux"    "$TMUX_PORT"    "/tmux/"    "tmux new -A -s main"
+
+# --- per-playbook ttyd services ---
+# Each playbook gets its own ttyd, its own port, its own tmux session named
+# claude-<playbook>. CLAUDE_CONFIG_DIR is exported by the wrapper script BEFORE
+# tmux creates the session, so reattach picks up the right config.
+i=0
+PLAYBOOK_PORTS=()
+for pb in "${PLAYBOOKS[@]}"; do
+  port=$((PLAYBOOK_PORT_BASE + i))
+  PLAYBOOK_PORTS+=("$port")
+  i=$((i + 1))
+
+  pb_dir="$PLAYBOOKS_DIR/$pb"
+  pb_wrapper="$GENERATED_DIR/claude-$pb.sh"
+  cat > "$pb_wrapper" <<EOF
+#!/usr/bin/env bash
+# Generated. Wraps Claude for playbook '$pb' in a persistent tmux session.
+# Set CLAUDE_CONFIG_DIR before tmux so reattach inherits it.
+export CLAUDE_CONFIG_DIR="$pb_dir"
+exec tmux new -A -s "claude-$pb" "claude"
+EOF
+  chmod +x "$pb_wrapper"
+
+  render_ttyd_service "$pb" "$port" "/$pb/" "$pb_wrapper"
 done
 
-# --- dashboard service (standalone Go HTTPS, not behind ttyd) ---
-if [[ -n "$DASHBOARD_PORT" ]]; then
-  # Find the chooser port so the dashboard can redirect ?arg=<session> there.
-  chooser_port=""
-  for svc in "${SERVICES[@]}"; do
-    IFS=: read -r n p _ <<< "$svc"
-    if [[ "$n" == "chooser" ]]; then chooser_port=$p; break; fi
-  done
-  : "${chooser_port:=8020}"
+# --- dashboard service (Go HTTP, fronted by Caddy) ---
+chooser_url="https://$TAILNET_HOST/chooser"
+label="$LABEL_PREFIX.$DASHBOARD_PORT"
+script="$GENERATED_DIR/dashboard.sh"
+plist="$LAUNCHD_DIR/$label.plist"
 
-  label="$LABEL_PREFIX.$DASHBOARD_PORT"
-  script="$GENERATED_DIR/dashboard.sh"
-  plist="$LAUNCHD_DIR/$label.plist"
+sed -e "s|__DASHBOARD_BIN__|$ROOT/dashboard/dashboard|g" \
+    -e "s|__PORT__|$DASHBOARD_PORT|g" \
+    -e "s|__CHOOSER_URL__|$chooser_url|g" \
+    -e "s|__PLAYBOOKS_DIR__|$PLAYBOOKS_DIR|g" \
+    -e "s|__TAILNET_HOST__|$TAILNET_HOST|g" \
+    "$ROOT/templates/dashboard.sh.tmpl" > "$script"
+chmod +x "$script"
 
-  sed -e "s|__DASHBOARD_BIN__|$ROOT/dashboard/dashboard|g" \
-      -e "s|__BIND_IP__|$BIND_IP|g" \
-      -e "s|__PORT__|$DASHBOARD_PORT|g" \
-      -e "s|__CERT__|$CERT_PATH|g" \
-      -e "s|__KEY__|$KEY_PATH|g" \
-      -e "s|__CHOOSER_URL__|https://$TAILNET_HOST:$chooser_port|g" \
-      "$ROOT/templates/dashboard.sh.tmpl" > "$script"
-  chmod +x "$script"
+sed -e "s|__LABEL__|$label|g" \
+    -e "s|__SCRIPT__|$script|g" \
+    -e "s|__INSTALL_DIR__|$ROOT|g" \
+    -e "s|__USER_HOME__|$USER_HOME|g" \
+    -e "s|__TMPDIR__|$USER_TMPDIR|g" \
+    "$ROOT/templates/launchd.plist.tmpl" > "$plist"
+plutil -lint "$plist" >/dev/null
 
-  sed -e "s|__LABEL__|$label|g" \
-      -e "s|__SCRIPT__|$script|g" \
-      -e "s|__INSTALL_DIR__|$ROOT|g" \
-      -e "s|__USER_HOME__|$USER_HOME|g" \
-      -e "s|__TMPDIR__|$USER_TMPDIR|g" \
-      "$ROOT/templates/launchd.plist.tmpl" > "$plist"
-  plutil -lint "$plist" >/dev/null
+launchctl bootout "gui/$UID_VAL/$label" 2>/dev/null || true
+launchctl bootstrap "gui/$UID_VAL" "$plist"
+say "$label installed (dashboard)"
 
-  launchctl bootout "gui/$UID_VAL/$label" 2>/dev/null || true
-  launchctl bootstrap "gui/$UID_VAL" "$plist"
-  say "$label installed (script: $script)"
+# --- render Caddyfile ---
+say "rendering Caddyfile"
+playbook_routes=""
+i=0
+for pb in "${PLAYBOOKS[@]}"; do
+  port="${PLAYBOOK_PORTS[$i]}"
+  i=$((i + 1))
+  playbook_routes+="	# Playbook: $pb"$'\n'
+  playbook_routes+="	handle /$pb/* {"$'\n'
+  playbook_routes+="		reverse_proxy 127.0.0.1:$port"$'\n'
+  playbook_routes+="	}"$'\n\n'
+done
+
+caddyfile="$GENERATED_DIR/Caddyfile"
+# Multi-line replacement: write the rendered routes block to a temp file, then
+# sed's `r` reads it in at the sentinel line and `d` drops the sentinel itself.
+# (BSD awk on macOS won't accept newlines inside `-v` variables, so we use sed.)
+routes_tmp="$GENERATED_DIR/.caddy-routes.tmp"
+printf '%s' "$playbook_routes" > "$routes_tmp"
+sed -e "/__PLAYBOOK_ROUTES__/r $routes_tmp" -e "/__PLAYBOOK_ROUTES__/d" "$ROOT/templates/Caddyfile.tmpl" \
+  | sed -e "s|__TAILNET_HOST__|$TAILNET_HOST|g" \
+        -e "s|__BIND_IP__|$BIND_IP|g" \
+        -e "s|__CERT__|$CERT_PATH|g" \
+        -e "s|__KEY__|$KEY_PATH|g" \
+        -e "s|__CHOOSER_PORT__|$CHOOSER_PORT|g" \
+        -e "s|__TMUX_PORT__|$TMUX_PORT|g" \
+        -e "s|__DASHBOARD_PORT__|$DASHBOARD_PORT|g" \
+        -e "s|__USER_HOME__|$USER_HOME|g" \
+        -e "s|__LABEL_PREFIX__|$LABEL_PREFIX|g" \
+  > "$caddyfile"
+rm -f "$routes_tmp"
+
+if $HAS_CADDY; then
+  if caddy validate --config "$caddyfile" >/dev/null 2>&1; then
+    say "Caddyfile validates"
+  else
+    warn "Caddyfile failed caddy validate — see: caddy validate --config $caddyfile"
+  fi
 fi
+
+# --- caddy launchd helper (system daemon, needs sudo to install) ---
+caddy_label="$LABEL_PREFIX.caddy"
+caddy_plist_src="$GENERATED_DIR/$caddy_label.plist"
+caddy_bin=$(command -v caddy 2>/dev/null || echo "/opt/homebrew/bin/caddy")
+sed -e "s|__LABEL__|$caddy_label|g" \
+    -e "s|__CADDY_BIN__|$caddy_bin|g" \
+    -e "s|__CADDYFILE__|$caddyfile|g" \
+    -e "s|__USER_HOME__|$USER_HOME|g" \
+    "$ROOT/templates/caddy.plist.tmpl" > "$caddy_plist_src"
+plutil -lint "$caddy_plist_src" >/dev/null
+
+# --- machine profile ---
+profile_dir="$HOME/.claude-profile/machines"
+mkdir -p "$profile_dir"
+host_short=$(hostname -s)
+profile_file="$profile_dir/$host_short.md"
+os_ver=$(sw_vers -productVersion 2>/dev/null || echo "unknown")
+arch=$(uname -m)
+cpu=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || echo "unknown")
+mem_gb=$(($(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1024 / 1024 / 1024))
+disk=$(df -h / | awk 'NR==2 {print $2 " total, " $4 " free"}')
+local_ip=$(ipconfig getifaddr en0 2>/dev/null || echo "")
+
+cat > "$profile_file" <<EOF
+# $host_short
+
+> Generated by webterm-kit installer on $(date -u +"%Y-%m-%dT%H:%M:%SZ"). Re-run to update.
+
+## Identity
+- **hostname**: $host_short
+- **tailnet host**: $TAILNET_HOST
+- **tailnet IP**: $BIND_IP
+- **local IP**: ${local_ip:-unknown}
+
+## Hardware
+- **arch**: $arch
+- **CPU**: $cpu
+- **memory**: ${mem_gb} GB
+- **disk (/) **: $disk
+
+## OS
+- **macOS**: $os_ver
+
+## webterm-kit
+- **install root**: $ROOT
+- **playbooks dir**: $PLAYBOOKS_DIR
+- **dashboard URL**: https://$TAILNET_HOST/
+- **playbooks served**: $(IFS=,; echo "${PLAYBOOKS[*]:-none}")
+EOF
+say "wrote machine profile to $profile_file"
 
 # --- summary ---
 echo
-say "all set. open these URLs in any device on your tailnet:"
-for svc in "${SERVICES[@]}"; do
-  IFS=: read -r name port _ <<< "$svc"
-  printf "    %-9s https://%s:%s/\n" "$name" "$TAILNET_HOST" "$port"
-done
-if [[ -n "$DASHBOARD_PORT" ]]; then
-  printf "    %-9s https://%s:%s/   (GUI session picker)\n" "dashboard" "$TAILNET_HOST" "$DASHBOARD_PORT"
-fi
+say "user-level services bootstrapped. Caddy still needs to start."
 echo
-c_dim "manage with: launchctl print|kickstart|kill|bootout gui/$UID_VAL/<label>"
+printf "Install Caddy (one-time, if not already):\n"
+printf "  brew install caddy\n\n"
+printf "Bootstrap Caddy as a system daemon (needs sudo, binds :80/:443):\n"
+printf "  sudo cp '%s' /Library/LaunchDaemons/%s.plist\n" "$caddy_plist_src" "$caddy_label"
+printf "  sudo chown root:wheel /Library/LaunchDaemons/%s.plist\n" "$caddy_label"
+printf "  sudo launchctl bootstrap system /Library/LaunchDaemons/%s.plist\n\n" "$caddy_label"
+printf "Or run Caddy in the foreground for testing:\n"
+printf "  sudo caddy run --config '%s'\n\n" "$caddyfile"
+printf "Once Caddy is up:\n"
+printf "  https://%s/                  dashboard (session + playbook picker)\n" "$TAILNET_HOST"
+printf "  https://%s/chooser/          tmux-session picker (TUI)\n" "$TAILNET_HOST"
+printf "  https://%s/tmux/             tmux 'main' session\n" "$TAILNET_HOST"
+for pb in "${PLAYBOOKS[@]}"; do
+  printf "  https://%s/%s/%s\n" "$TAILNET_HOST" "$pb" "$(printf '%*s' $((20 - ${#pb})) '')Claude wrapped in tmux"
+done
+echo
+c_dim "manage user services: launchctl print|kickstart|kill|bootout gui/$UID_VAL/<label>"
 echo
 c_dim "logs: tail -f ~/Library/Logs/$LABEL_PREFIX.<port>.log"
 echo

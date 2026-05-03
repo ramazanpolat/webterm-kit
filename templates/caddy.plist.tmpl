@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  System LaunchDaemon for Caddy. Must live in /Library/LaunchDaemons/ (root-owned)
+  so it can bind to :80 and :443. Install with:
+
+    sudo cp generated/__LABEL__.plist /Library/LaunchDaemons/__LABEL__.plist
+    sudo chown root:wheel /Library/LaunchDaemons/__LABEL__.plist
+    sudo launchctl bootstrap system /Library/LaunchDaemons/__LABEL__.plist
+
+  Tear down with:
+    sudo launchctl bootout system/__LABEL__
+    sudo rm /Library/LaunchDaemons/__LABEL__.plist
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>__LABEL__</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__CADDY_BIN__</string>
+		<string>run</string>
+		<string>--config</string>
+		<string>__CADDYFILE__</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>ThrottleInterval</key>
+	<integer>5</integer>
+	<key>StandardOutPath</key>
+	<string>__USER_HOME__/Library/Logs/__LABEL__.log</string>
+	<key>StandardErrorPath</key>
+	<string>__USER_HOME__/Library/Logs/__LABEL__.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>__USER_HOME__</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+</dict>
+</plist>

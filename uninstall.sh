@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Reverse install.sh — boots out launchd services and deletes generated files.
-# Logs and the chooser source are left in place.
+# Logs and the Go source are left in place.
+#
+# Caddy is NOT torn down here (it's installed as a system daemon and may be
+# used by other services). To remove the Caddy daemon:
+#   sudo launchctl bootout system/<LABEL_PREFIX>.caddy
+#   sudo rm /Library/LaunchDaemons/<LABEL_PREFIX>.caddy.plist
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
@@ -14,7 +19,7 @@ shopt -s nullglob
 plists=("$LAUNCHD_DIR/$PREFIX".*.plist)
 
 if (( ${#plists[@]} == 0 )); then
-  say "no services with prefix '$PREFIX' found in $LAUNCHD_DIR"
+  say "no user services with prefix '$PREFIX' found in $LAUNCHD_DIR"
 fi
 
 for plist in "${plists[@]}"; do
@@ -37,4 +42,7 @@ if [[ -f "$ROOT/dashboard/dashboard" ]]; then
   rm -f "$ROOT/dashboard/dashboard"
 fi
 
-say "done"
+say "user-level cleanup done."
+say "if Caddy was bootstrapped as a system daemon, remove it manually:"
+say "  sudo launchctl bootout system/$PREFIX.caddy"
+say "  sudo rm /Library/LaunchDaemons/$PREFIX.caddy.plist"
