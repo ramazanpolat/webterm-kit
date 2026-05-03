@@ -83,12 +83,17 @@ test.describe('webterm tab content', () => {
   });
 
   test('open form navigates to /chooser/?arg=<name>', async ({ page }) => {
+    // Intercept the /chooser/ request so the form-submit doesn't actually
+    // hand control to ttyd — otherwise the WS opens long enough for the
+    // chooser to `tmux new -A -s <name>` and we leak orphan tmux sessions.
+    // We just want to assert the form built the right URL.
+    await page.route('**/chooser/**', (route) => route.fulfill({
+      status: 200, contentType: 'text/html', body: '<html><body>intercepted</body></html>',
+    }));
     await page.goto('/');
-    await page.fill('#new-name', 'pw-test-session');
-    // Submitting the form sets window.location.href = /chooser/?arg=<encoded>.
-    // We just wait for the navigation to land on that URL — proves the form
-    // built the URL correctly. ttyd at /chooser/ then handles the request.
-    const nav = page.waitForURL(/\/chooser\/\?arg=pw-test-session$/, { timeout: 5000 });
+    const name = `pw-open-${Date.now()}`;
+    await page.fill('#new-name', name);
+    const nav = page.waitForURL(new RegExp(`/chooser/\\?arg=${name}$`), { timeout: 5000 });
     await page.locator('form.controls button[type="submit"]').click();
     await nav;
   });

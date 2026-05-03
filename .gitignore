@@ -4,3 +4,4 @@ dashboard/dashboard
 test/browser/node_modules/
 test/browser/test-results/
 test/browser/playwright-report/
+test/browser/screenshots/

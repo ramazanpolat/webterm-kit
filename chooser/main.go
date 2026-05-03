@@ -211,13 +211,14 @@ func newModel(notice string) model {
 	sessionsList.SetShowStatusBar(false)
 	sessionsList.SetShowHelp(false)
 	sessionsList.SetFilteringEnabled(true)
+	// Bubble Tea's list already declares "q quit" in its short help; we don't
+	// re-declare it here or it renders as "q quit • q quit".
 	sessionExtra := func() []key.Binding {
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
 			key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "playbooks")),
 			key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "shell")),
 			key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
-			key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 		}
 	}
 	sessionsList.AdditionalShortHelpKeys = sessionExtra
@@ -234,7 +235,6 @@ func newModel(notice string) model {
 			key.NewBinding(key.WithKeys("k"), key.WithHelp("k", "kill")),
 			key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "sessions")),
 			key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
-			key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 		}
 	}
 	playbookList.AdditionalShortHelpKeys = playbookExtra

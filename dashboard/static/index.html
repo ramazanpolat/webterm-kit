@@ -320,7 +320,10 @@
 
 <header>
   <div class="brand" id="brand">
-    <span class="ctx" id="brand-ctx">user@host:~</span><span class="prompt"> $ </span><span class="cmd">kit</span>
+    <!-- ctx starts with a non-breaking space to reserve the slot. Filled by
+         loadSystem() once /api/system responds — avoids the literal-looking
+         "user@host:~" placeholder flashing for the first paint. -->
+    <span class="ctx" id="brand-ctx">&nbsp;</span><span class="prompt"> $ </span><span class="cmd">kit</span>
   </div>
   <div class="sysbar" id="sysbar">
     <span class="stat" id="sys-cpu"><span class="label">cpu</span><span class="val">—</span></span>
@@ -382,7 +385,7 @@
 </main>
 
 <footer>
-  press <code>1</code>–<code>4</code> to switch tabs · auto-refreshes when tab regains focus
+  press <code>1</code>–<code>5</code> to switch tabs · auto-refreshes when tab regains focus
 </footer>
 
 <script>
