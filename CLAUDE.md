@@ -25,6 +25,11 @@ macOS-only kit that exposes terminal sessions and Claude playbooks over a Tailne
 # or after adding/removing playbooks under ~/.claude-playbooks/).
 ./install.sh
 
+# Smoke-test a running install (curl-driven, ~5 sec, no browser deps).
+# Hits every /api/* endpoint + every Caddy route, including a POST/DELETE
+# round-trip on /api/services. Use TAILNET_HOST to override the target.
+./test/smoke.sh
+
 # Tear down launchd services + remove generated scripts/plists.
 # Caddy daemon must be removed manually (system-level, sudo required) — see uninstall.sh output.
 ./uninstall.sh

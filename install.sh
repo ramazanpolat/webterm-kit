@@ -414,3 +414,5 @@ c_dim "manage user services: launchctl print|kickstart|kill|bootout gui/$UID_VAL
 echo
 c_dim "logs: tail -f ~/Library/Logs/$LABEL_PREFIX.<port>.log"
 echo
+c_dim "smoke test (after Caddy is up): TAILNET_HOST=$TAILNET_HOST $ROOT/test/smoke.sh"
+echo
