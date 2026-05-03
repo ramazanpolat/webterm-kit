@@ -2,8 +2,14 @@
 #
 # Caddy fronts every backend on :443 with the Tailscale-issued cert. ttyds and
 # the dashboard bind 127.0.0.1 (plain HTTP) — only Caddy is internet-facing.
-# Path-routed: no port to remember. https://<host>/ serves the dashboard;
-# /<playbook> serves that playbook's tmux-wrapped Claude.
+# v2.1 routing (more structured than v2.0):
+#   /                       dashboard (everything in one view)
+#   /chooser/               TUI session picker
+#   /tmux/                  alias for /chooser/
+#   /tmux/<name>/           redirect to /chooser/?arg=<name> (attach-or-create)
+#   /playbook/              redirect to /#playbooks (jumps to dashboard section)
+#   /playbook/<name>/       that playbook's tmux-wrapped Claude (one ttyd per)
+#   /api/*                  dashboard JSON
 
 {
 	# Don't try to use Let's Encrypt — we have a Tailscale cert.
@@ -22,19 +28,34 @@ https://__TAILNET_HOST__:443, https://__BIND_IP__:443 {
 
 	# WebSocket upgrades (ttyd) are handled by reverse_proxy automatically.
 
-	# Chooser TUI — tmux-session picker.
+	# --- TUI picker --------------------------------------------------
 	handle /chooser/* {
 		reverse_proxy 127.0.0.1:__CHOOSER_PORT__
 	}
 
-	# Generic tmux session.
-	handle /tmux/* {
-		reverse_proxy 127.0.0.1:__TMUX_PORT__
+	# --- tmux namespace ----------------------------------------------
+	# /tmux/<name>/ → attach (or create) tmux session <name> via the chooser's
+	# auto-attach mode. We redirect (302) so the user-visible URL becomes the
+	# canonical chooser one — keeps WS routing simple.
+	@tmux_named path_regexp tmux_named ^/tmux/([^/]+)/?$
+	handle @tmux_named {
+		redir /chooser/?arg={re.tmux_named.1} 302
+	}
+	# /tmux or /tmux/ alone → the picker.
+	@tmux_root path /tmux /tmux/
+	handle @tmux_root {
+		redir /chooser/ 302
 	}
 
+	# --- playbook namespace ------------------------------------------
 __PLAYBOOK_ROUTES__
+	# /playbook or /playbook/ alone → jump to the dashboard's Playbooks section.
+	@playbook_root path /playbook /playbook/
+	handle @playbook_root {
+		redir /#playbooks 302
+	}
 
-	# Dashboard at root. Must come last so the more-specific handles above win.
+	# --- dashboard at root (must be last so more-specific handles win) -
 	handle {
 		reverse_proxy 127.0.0.1:__DASHBOARD_PORT__
 	}

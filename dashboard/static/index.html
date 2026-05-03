@@ -170,8 +170,8 @@
     <button type="submit" class="primary">open</button>
   </form>
   <div id="error" hidden></div>
-  <div id="playbooks"></div>
-  <div id="list"></div>
+  <section id="playbooks"></section>
+  <section id="sessions"></section>
 </main>
 <footer>auto-refreshes when this tab regains focus</footer>
 <script>
@@ -225,14 +225,14 @@
   }
 
   function render(sessions) {
-    const list = document.getElementById('list');
+    const list = document.getElementById('sessions');
     if (!sessions.length) {
       list.innerHTML = '<div class="section-title">tmux sessions</div>'
         + '<div class="empty">no tmux sessions yet &mdash; type a name above to start one</div>';
       return;
     }
     list.innerHTML = '<div class="section-title">tmux sessions</div>' + sessions.map(s => {
-      const url = chooserUrl + '/?arg=' + encodeURIComponent(s.name);
+      const url = '/tmux/' + encodeURIComponent(s.name) + '/';
       const winBadge = '<span class="badge">' + s.windows + ' window' + (s.windows === 1 ? '' : 's') + '</span>';
       const attachBadge = s.attached > 0
         ? '<span class="badge attached">attached &times;' + s.attached + '</span>'
@@ -263,13 +263,23 @@
     e.preventDefault();
     const name = document.getElementById('new-name').value.trim();
     if (!name) return false;
-    if (!chooserUrl) return false;
-    window.location.href = chooserUrl + '/?arg=' + encodeURIComponent(name);
+    window.location.href = '/tmux/' + encodeURIComponent(name) + '/';
     return false;
   }
 
+  // After data loads, honor #playbooks / #sessions hashes by scrolling the
+  // matching section into view (Caddy redirects /playbook/ and /tmux/ here).
+  function applyHash() {
+    const h = window.location.hash.replace('#', '');
+    if (h === 'playbooks' || h === 'sessions') {
+      const el = document.getElementById(h);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
   document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
-  load();
+  window.addEventListener('hashchange', applyHash);
+  load().then(applyHash);
 </script>
 </body>
 </html>

@@ -94,13 +94,14 @@ fi
 # --- ports ---
 # Fixed system services keep their ports for backward compat. Playbooks get
 # 8030+. None of these are user-facing — Caddy on :443 is the only public port.
+# (The standalone tmux ttyd from v2.0 was dropped in v2.1: /tmux/ now redirects
+# to the chooser, which can pick or create any session.)
 CHOOSER_PORT=8020
 DASHBOARD_PORT="${DASHBOARD_PORT:-8021}"
-TMUX_PORT=8022
 PLAYBOOK_PORT_BASE=8030
 
-# Reserved path segments. Playbooks named like these would shadow a system route.
-RESERVED_PATHS=(chooser tmux dashboard api static caddy)
+# Playbooks live under /playbook/<name>/ so they can't collide with top-level
+# routes. We still forbid '/' in playbook names just to keep paths well-formed.
 
 # --- discover playbooks ---
 PLAYBOOKS=()
@@ -108,25 +109,22 @@ if [[ -d "$PLAYBOOKS_DIR" ]]; then
   for d in "$PLAYBOOKS_DIR"/*/; do
     name=$(basename "$d")
     [[ -f "$d/CLAUDE.md" ]] || continue
-    for r in "${RESERVED_PATHS[@]}"; do
-      [[ "$name" == "$r" ]] && die "playbook '$name' shadows reserved path '/$r'. Rename in $PLAYBOOKS_DIR/"
-    done
+    [[ "$name" == *"/"* ]] && die "playbook name '$name' contains '/' — invalid"
     PLAYBOOKS+=("$name")
   done
 fi
 
 # --- show what we'll do ---
 say "system services:"
-printf "    %-12s 127.0.0.1:%s  -> https://%s/chooser/\n"   "chooser"   "$CHOOSER_PORT"   "$TAILNET_HOST"
-printf "    %-12s 127.0.0.1:%s  -> https://%s/tmux/\n"      "tmux"      "$TMUX_PORT"      "$TAILNET_HOST"
-printf "    %-12s 127.0.0.1:%s  -> https://%s/\n"           "dashboard" "$DASHBOARD_PORT" "$TAILNET_HOST"
+printf "    %-12s 127.0.0.1:%s  -> https://%s/chooser/  (and /tmux/)\n" "chooser"   "$CHOOSER_PORT"   "$TAILNET_HOST"
+printf "    %-12s 127.0.0.1:%s  -> https://%s/\n"                       "dashboard" "$DASHBOARD_PORT" "$TAILNET_HOST"
 
 if (( ${#PLAYBOOKS[@]} > 0 )); then
   say "playbooks discovered in $PLAYBOOKS_DIR:"
   i=0
   for pb in "${PLAYBOOKS[@]}"; do
     port=$((PLAYBOOK_PORT_BASE + i))
-    printf "    %-12s 127.0.0.1:%s  -> https://%s/%s/\n" "$pb" "$port" "$TAILNET_HOST" "$pb"
+    printf "    %-12s 127.0.0.1:%s  -> https://%s/playbook/%s/\n" "$pb" "$port" "$TAILNET_HOST" "$pb"
     i=$((i + 1))
   done
 else
@@ -178,9 +176,13 @@ render_ttyd_service() {
   say "$label installed"
 }
 
-# --- system ttyd services (chooser + tmux) ---
+# --- system ttyd services (chooser only; /tmux/ is a Caddy alias for /chooser/) ---
 render_ttyd_service "chooser" "$CHOOSER_PORT" "/chooser/" "$ROOT/chooser/chooser"
-render_ttyd_service "tmux"    "$TMUX_PORT"    "/tmux/"    "tmux new -A -s main"
+
+# Boot out the v2.0 standalone tmux service if present — /tmux/ now redirects
+# to /chooser/, so the dedicated tmux ttyd is dead weight.
+launchctl bootout "gui/$UID_VAL/$LABEL_PREFIX.8022" 2>/dev/null || true
+rm -f "$LAUNCHD_DIR/$LABEL_PREFIX.8022.plist" "$GENERATED_DIR/ttyd-tmux.sh"
 
 # --- per-playbook ttyd services ---
 # Each playbook gets its own ttyd, its own port, its own tmux session named
@@ -204,7 +206,7 @@ exec tmux new -A -s "claude-$pb" "claude"
 EOF
   chmod +x "$pb_wrapper"
 
-  render_ttyd_service "$pb" "$port" "/$pb/" "$pb_wrapper"
+  render_ttyd_service "$pb" "$port" "/playbook/$pb/" "$pb_wrapper"
 done
 
 # --- dashboard service (Go HTTP, fronted by Caddy) ---
@@ -241,7 +243,7 @@ for pb in "${PLAYBOOKS[@]}"; do
   port="${PLAYBOOK_PORTS[$i]}"
   i=$((i + 1))
   playbook_routes+="	# Playbook: $pb"$'\n'
-  playbook_routes+="	handle /$pb/* {"$'\n'
+  playbook_routes+="	handle /playbook/$pb/* {"$'\n'
   playbook_routes+="		reverse_proxy 127.0.0.1:$port"$'\n'
   playbook_routes+="	}"$'\n\n'
 done
@@ -258,7 +260,6 @@ sed -e "/__PLAYBOOK_ROUTES__/r $routes_tmp" -e "/__PLAYBOOK_ROUTES__/d" "$ROOT/t
         -e "s|__CERT__|$CERT_PATH|g" \
         -e "s|__KEY__|$KEY_PATH|g" \
         -e "s|__CHOOSER_PORT__|$CHOOSER_PORT|g" \
-        -e "s|__TMUX_PORT__|$TMUX_PORT|g" \
         -e "s|__DASHBOARD_PORT__|$DASHBOARD_PORT|g" \
         -e "s|__USER_HOME__|$USER_HOME|g" \
         -e "s|__LABEL_PREFIX__|$LABEL_PREFIX|g" \
@@ -337,11 +338,13 @@ printf "  sudo launchctl bootstrap system /Library/LaunchDaemons/%s.plist\n\n" "
 printf "Or run Caddy in the foreground for testing:\n"
 printf "  sudo caddy run --config '%s'\n\n" "$caddyfile"
 printf "Once Caddy is up:\n"
-printf "  https://%s/                  dashboard (session + playbook picker)\n" "$TAILNET_HOST"
-printf "  https://%s/chooser/          tmux-session picker (TUI)\n" "$TAILNET_HOST"
-printf "  https://%s/tmux/             tmux 'main' session\n" "$TAILNET_HOST"
+printf "  https://%s/                       dashboard (everything)\n"                "$TAILNET_HOST"
+printf "  https://%s/chooser/               TUI picker (sessions + playbooks)\n"     "$TAILNET_HOST"
+printf "  https://%s/tmux/                  alias for /chooser/\n"                   "$TAILNET_HOST"
+printf "  https://%s/tmux/<name>/           attach-or-create tmux session <name>\n"  "$TAILNET_HOST"
+printf "  https://%s/playbook/              redirects to dashboard playbooks\n"      "$TAILNET_HOST"
 for pb in "${PLAYBOOKS[@]}"; do
-  printf "  https://%s/%s/%s\n" "$TAILNET_HOST" "$pb" "$(printf '%*s' $((20 - ${#pb})) '')Claude wrapped in tmux"
+  printf "  https://%s/playbook/%s/%s\n" "$TAILNET_HOST" "$pb" "$(printf '%*s' $((10 - ${#pb})) '')Claude wrapped in tmux"
 done
 echo
 c_dim "manage user services: launchctl print|kickstart|kill|bootout gui/$UID_VAL/<label>"

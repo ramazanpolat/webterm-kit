@@ -6,7 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 macOS-only kit that exposes terminal sessions and Claude playbooks over a Tailnet via `ttyd` + `tmux`, fronted by **Caddy on :443** for path-based routing. Two peer session pickers — a Bubble Tea TUI and a tiny Go HTTP dashboard with a vanilla-JS SPA. There is no application server in the traditional sense — `install.sh` is the entry point and renders templates into `generated/` and `~/Library/LaunchAgents/`, which `launchd` then runs. Caddy is bootstrapped separately as a system daemon (needs sudo to bind :80/:443).
 
-**v2 architecture:** every backend (chooser, tmux, dashboard, per-playbook ttyds) binds 127.0.0.1 with plain HTTP. Caddy on :443 is the only internet-facing process. URLs are path-routed (`/`, `/chooser/`, `/tmux/`, `/<playbook>/`) — no port numbers in user-visible URLs.
+**v2 architecture:** every backend (chooser, dashboard, per-playbook ttyds) binds 127.0.0.1 with plain HTTP. Caddy on :443 is the only internet-facing process. URLs are namespaced and path-routed — no port numbers in user-visible URLs:
+
+| URL | what |
+|---|---|
+| `/` | dashboard (everything) |
+| `/chooser/` | TUI session picker (Bubble Tea) |
+| `/tmux/` | alias for `/chooser/` |
+| `/tmux/<name>/` | 302 → `/chooser/?arg=<name>` (attach-or-create) |
+| `/playbook/` | 302 → `/#playbooks` (jumps to dashboard section) |
+| `/playbook/<name>/` | that playbook's tmux-wrapped Claude (one ttyd per) |
+| `/api/*` | dashboard JSON |
 
 ## Common commands
 
@@ -59,20 +69,23 @@ Three layers, all glued by `install.sh`:
 
 Per-service `generated/ttyd-<name>.sh` is the script that ttyd execs. ttyd uses `--base-path /<name>/` so WebSocket URLs resolve correctly behind Caddy.
 
-- **chooser** (port 8020) — `chooser/main.go` Bubble Tea TUI. Two views: tmux sessions + Claude playbooks. Press `p` to toggle. **Auto-attach mode**: argv[1] (set via ttyd `-a` from `?arg=name`) runs `tmux new -A -s <name>` directly and exits on detach.
-- **tmux** (port 8022) — generic `tmux new -A -s main`.
-- **per-playbook ttyds** (8030+) — one per `~/.claude-playbooks/*/CLAUDE.md`. Each runs `generated/claude-<playbook>.sh` which exports `CLAUDE_CONFIG_DIR` then `exec tmux new -A -s claude-<playbook> claude`. The env is set BEFORE tmux creates the session — critical for reattach to inherit the right config dir.
-- **dashboard** (port 8021) — `dashboard/main.go`, plain HTTP, embeds the SPA. Endpoints: `/api/sessions` (sessions + playbooks + chooserUrl), `/api/status` (compact `[{playbook, running, lastActive, pid}]` for widgets).
+- **chooser** (port 8020) — `chooser/main.go` Bubble Tea TUI. Two views: tmux sessions + Claude playbooks. Press `p` to toggle. **Auto-attach mode**: argv[1] (set via ttyd `-a` from `?arg=name`) runs `tmux new -A -s <name>` directly and exits on detach. Used by both `/chooser/` and `/tmux/<name>/` (the latter via Caddy redirect).
+- **per-playbook ttyds** (8030+) — one per `~/.claude-playbooks/*/CLAUDE.md`. Each runs `generated/claude-<playbook>.sh` which exports `CLAUDE_CONFIG_DIR` then `exec tmux new -A -s claude-<playbook> claude`. The env is set BEFORE tmux creates the session — critical for reattach to inherit the right config dir. ttyd's `--base-path /playbook/<name>/` matches the Caddy route.
+- **dashboard** (port 8021 by default) — `dashboard/main.go`, plain HTTP, embeds the SPA. Endpoints: `/api/sessions` (sessions + playbooks + chooserUrl), `/api/status` (compact `[{playbook, running, lastActive, pid}]` for widgets).
+
+**Removed in v2.1:** the standalone `tmux` ttyd (port 8022) running `tmux new -A -s main` — `/tmux/` is now a Caddy alias for `/chooser/`, so the dedicated ttyd was redundant. install.sh boots out the v2.0 service if it finds one.
 
 ### 2. Caddy — TLS terminator + path router on :443
 
-`templates/Caddyfile.tmpl` rendered to `generated/Caddyfile`. Routes:
-- `/` → dashboard (root, "must be last so more-specific handles win")
+`templates/Caddyfile.tmpl` rendered to `generated/Caddyfile`. Routes (top of file shows the full table):
 - `/chooser/*` → chooser ttyd
-- `/tmux/*` → tmux ttyd
-- `/<playbook>/*` → that playbook's ttyd (one route block per playbook, generated)
+- `@tmux_named` (regex `^/tmux/([^/]+)/?$`) → 302 to `/chooser/?arg={1}`
+- `@tmux_root` (`/tmux` or `/tmux/`) → 302 to `/chooser/`
+- `/playbook/<name>/*` → that playbook's ttyd (one block per, generated)
+- `@playbook_root` (`/playbook` or `/playbook/`) → 302 to `/#playbooks`
+- `handle {}` (catch-all, last) → dashboard
 
-Reserved playbook names (would shadow a system route): `chooser`, `tmux`, `dashboard`, `api`, `static`, `caddy`. install.sh dies if a playbook collides.
+Because playbooks are namespaced under `/playbook/`, no playbook name can collide with a top-level route — the only restriction is no `/` in playbook names. install.sh checks this.
 
 Caddy uses the Tailscale-issued cert via `tls <cert> <key>`. `auto_https off` so Caddy doesn't try Let's Encrypt. The plist (`templates/caddy.plist.tmpl`) installs to `/Library/LaunchDaemons/` (system) — needs sudo. install.sh prints the exact `sudo cp` + `sudo launchctl bootstrap system` commands; it does NOT run them.
 

@@ -145,7 +145,7 @@ func listPlaybooks(playbooksDir string) []Playbook {
 		if _, err := os.Stat(claudeMd); err != nil {
 			continue
 		}
-		pb := Playbook{Name: e.Name(), Running: running["claude-"+e.Name()], URL: "/" + e.Name() + "/"}
+		pb := Playbook{Name: e.Name(), Running: running["claude-"+e.Name()], URL: "/playbook/" + e.Name() + "/"}
 		// Prefer sessions/ mtime as a proxy for "last activity"; fall back to
 		// the playbook directory's own mtime so something is always shown.
 		if info, err := os.Stat(filepath.Join(playbooksDir, e.Name(), "sessions")); err == nil {
