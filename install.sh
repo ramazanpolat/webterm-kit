@@ -308,7 +308,12 @@ EOF
 )
 fi
 service_routes="# === BEGIN: webterm-kit auto-generated services ==="$'\n'
-service_routes+="$service_inner"
+# `$(python3 ...)` strips trailing newlines, which can jam the last service's
+# closing `}` against the END marker on the same line ("}# === END ===") and
+# break Caddy's tokenizer. Re-add the trailing newline if non-empty.
+if [[ -n "$service_inner" ]]; then
+  service_routes+="$service_inner"$'\n'
+fi
 service_routes+="# === END: webterm-kit auto-generated services ==="$'\n'
 playbook_routes+="$service_routes"$'\n'
 

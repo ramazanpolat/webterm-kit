@@ -260,6 +260,23 @@
   table.procs tr.kit td, table.procs tr.exposed td { color: var(--fg-faint); }
   table.procs tr.kit td.port, table.procs tr.exposed td.port { color: var(--fg-faint); }
 
+  /* protocol tag (http / https / unknown) — its own column */
+  table.procs td.proto-cell { width: 1px; white-space: nowrap; padding-right: 8px; }
+  .proto {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 8px;
+    border: 1px solid var(--rule-bright);
+    color: var(--fg-dim);
+    text-transform: lowercase;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+  }
+  .proto.http  { color: var(--green); border-color: var(--green); }
+  .proto.https { color: var(--accent); border-color: var(--accent); }
+  .proto.unknown { color: var(--fg-faint); border-style: dashed; }
+
   .add-btn {
     background: transparent;
     border: 1px solid var(--accent);
@@ -524,8 +541,11 @@
         action = `<button class="add-btn" data-idx="${i}" data-port="${p.port}" data-cmd="${esc(p.command)}">+ add</button>`;
       }
       const userCol = `<td>${esc(p.user)}</td>`;
+      const proto = p.protocol || 'unknown';
+      const protoTag = `<span class="proto ${esc(proto)}" title="probed via GET / + TLS handshake fallback (cached 60s)">${esc(proto === 'unknown' ? '?' : proto)}</span>`;
       return `<tr class="${trClass}" id="proc-row-${i}">
         <td class="port">${p.port}</td>
+        <td class="proto-cell">${protoTag}</td>
         <td>${esc(p.command)}</td>
         ${userCol}
         <td class="cmd" title="${esc(p.cmdline)}">${esc(p.cmdline)}</td>
@@ -533,7 +553,7 @@
       </tr>`;
     }).join('');
     el.innerHTML = `<table class="procs">
-      <thead><tr><th>port</th><th>proc</th><th>user</th><th>cmdline</th><th></th></tr></thead>
+      <thead><tr><th>port</th><th>proto</th><th>proc</th><th>user</th><th>cmdline</th><th></th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
     // Wire up "add" buttons.

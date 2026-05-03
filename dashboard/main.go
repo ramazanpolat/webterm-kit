@@ -1,12 +1,14 @@
 package main
 
 import (
+	"crypto/tls"
 	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -67,13 +69,92 @@ type Service struct {
 // (e.g. `opencode --web`) to the dashboard with one click.
 type Process struct {
 	PID        int    `json:"pid"`
-	Command    string `json:"command"`    // short binary name from lsof
-	Cmdline    string `json:"cmdline"`    // full command line from `ps`
+	Command    string `json:"command"`              // short binary name from lsof
+	Cmdline    string `json:"cmdline"`              // full command line from `ps`
 	User       string `json:"user"`
-	Bind       string `json:"bind"`       // 127.0.0.1, *, ::1, etc.
+	Bind       string `json:"bind"`                 // 127.0.0.1, *, ::1, etc.
 	Port       int    `json:"port"`
-	Kind       string `json:"kind"`       // "kit" if it's our own infra, "exposed" if already in services.json, "" otherwise
+	Kind       string `json:"kind"`                 // "kit" if it's our own infra, "exposed" if already in services.json, "" otherwise
 	ServiceURL string `json:"serviceUrl,omitempty"` // path under Caddy if Kind == "exposed"
+	Protocol   string `json:"protocol"`             // "http" / "https" / "unknown" — from probeProtocol()
+}
+
+// protoCache memoizes protocol probes so /api/processes polls don't reopen
+// hundreds of TCP connections per minute. TTL is short enough that a service
+// switching its protocol gets noticed within a minute.
+var (
+	protoCacheMu sync.Mutex
+	protoCache   = map[string]protoEntry{}
+)
+
+type protoEntry struct {
+	protocol string
+	fetched  time.Time
+}
+
+const protoCacheTTL = 60 * time.Second
+const probeTimeout = 200 * time.Millisecond
+
+// detectProtocol tries the cache, then probes if stale or missing. Safe to
+// call concurrently from many goroutines.
+func detectProtocol(pid int, bind string, port int) string {
+	key := fmt.Sprintf("%d:%d", pid, port)
+	protoCacheMu.Lock()
+	if e, ok := protoCache[key]; ok && time.Since(e.fetched) < protoCacheTTL {
+		protoCacheMu.Unlock()
+		return e.protocol
+	}
+	protoCacheMu.Unlock()
+	p := probeProtocol(bind, port)
+	protoCacheMu.Lock()
+	protoCache[key] = protoEntry{protocol: p, fetched: time.Now()}
+	protoCacheMu.Unlock()
+	return p
+}
+
+// probeProtocol opens a connection and tries to identify the protocol.
+// Strategy: send a plain-HTTP GET; if the response begins with "HTTP/" it's
+// HTTP. Otherwise attempt a TLS handshake — success → HTTPS. Anything else →
+// unknown (could be a database, ssh, raw TCP, gRPC-only, etc.).
+//
+// The dial uses 127.0.0.1 when the listener is bound to "*" / "0.0.0.0" /
+// IPv6 wildcards, so we never poke an external interface.
+func probeProtocol(bind string, port int) string {
+	host := bind
+	switch host {
+	case "*", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	addr := net.JoinHostPort(host, fmt.Sprintf("%d", port))
+
+	// 1) Plain-HTTP probe.
+	if isPlainHTTP(addr, host) {
+		return "http"
+	}
+	// 2) TLS handshake. If the peer can complete one, call it https.
+	dialer := &net.Dialer{Timeout: probeTimeout}
+	tlsConn, err := tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{InsecureSkipVerify: true})
+	if err == nil {
+		_ = tlsConn.Close()
+		return "https"
+	}
+	return "unknown"
+}
+
+func isPlainHTTP(addr, host string) bool {
+	conn, err := net.DialTimeout("tcp", addr, probeTimeout)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(probeTimeout * 3))
+	req := fmt.Sprintf("GET / HTTP/1.0\r\nHost: %s\r\nUser-Agent: webterm-kit-probe/1\r\nConnection: close\r\n\r\n", host)
+	if _, err := conn.Write([]byte(req)); err != nil {
+		return false
+	}
+	buf := make([]byte, 8)
+	n, _ := conn.Read(buf)
+	return n >= 5 && strings.HasPrefix(string(buf[:n]), "HTTP/")
 }
 
 // listProcesses runs `lsof -nP -iTCP -sTCP:LISTEN` and parses each row into
@@ -184,6 +265,20 @@ func listProcesses(services []Service) []Process {
 	if procs == nil {
 		return []Process{}
 	}
+
+	// Probe each process for HTTP / HTTPS in parallel. Cached for 60s so
+	// frequent /api/processes polls don't reopen a TCP connection per row.
+	// Skip the dashboard's own port (it's obviously us, and we'd dead-lock
+	// since the probe would queue behind the very handler that called it).
+	var wg sync.WaitGroup
+	for i := range procs {
+		wg.Add(1)
+		go func(p *Process) {
+			defer wg.Done()
+			p.Protocol = detectProtocol(p.PID, p.Bind, p.Port)
+		}(&procs[i])
+	}
+	wg.Wait()
 	return procs
 }
 
@@ -249,11 +344,19 @@ func regenerateCaddyfileServices(caddyfilePath string, services []Service) error
 	}
 	b.WriteString(endMarker)
 	out := s[:startIdx] + b.String() + s[endIdx+len(endMarker):]
-	tmp := caddyfilePath + ".tmp"
-	if err := os.WriteFile(tmp, []byte(out), 0644); err != nil {
+	if err := os.WriteFile(caddyfilePath, []byte(out), 0644); err != nil {
 		return err
 	}
-	return os.Rename(tmp, caddyfilePath)
+	// Trigger Caddy reload via its admin API. --watch turned out to be
+	// unreliable on macOS (no event for either rename or in-place edit) —
+	// admin-API reload is deterministic and fast (~50ms).
+	cmd := exec.Command("caddy", "reload", "--config", caddyfilePath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// Don't fail the request if reload fails — the file is updated; the
+		// user can manually `caddy reload` or restart Caddy. Just log.
+		log.Printf("caddy reload failed (services file written though): %v: %s", err, string(out))
+	}
+	return nil
 }
 
 // loadServices reads the services file. Missing file → empty list (the user

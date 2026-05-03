@@ -12,6 +12,12 @@ const target =
 
 export default defineConfig({
   testDir: '.',
+  // Default discovery skips exhaustive + explore — they need extra setup
+  // (test http server, screenshot reads). Their wrapper scripts set
+  // INCLUDE_EXTENDED=1 to opt in.
+  testIgnore: process.env.INCLUDE_EXTENDED === '1'
+    ? []
+    : ['exhaustive.spec.js', 'explore.spec.js'],
   // Each test file is its own world; no shared state between them.
   fullyParallel: false,
   forbidOnly: !!process.env.CI,

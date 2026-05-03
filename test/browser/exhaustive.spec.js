@@ -199,14 +199,17 @@ test.describe('exhaustive', () => {
   });
 
   test('F5 Caddy proxies the new service path to the test server', async ({ request }) => {
-    // Give Caddy --watch a beat to reload after the rewrite from F3.
-    await new Promise(r => setTimeout(r, 1500));
-    const r = await request.get(`/${RUN_ID}/`);
-    // Caddy uses `handle` (preserves path), so the backend sees /<RUN_ID>/.
-    // Python's http.server returns 404 because /tmp/<RUN_ID>/ doesn't exist —
-    // but the *Server* response header proves the request reached our backend.
-    // That's what we're really testing: did Caddy route through?
-    expect(r.headers()['server']).toMatch(/SimpleHTTP/i);
+    // Caddy --watch's reload timing varies; poll up to ~5s for the new route
+    // to come live. The backend (python3 -m http.server) sets a distinctive
+    // Server header that proves Caddy routed through.
+    let server = '';
+    for (let i = 0; i < 10; i++) {
+      const r = await request.get(`/${RUN_ID}/`);
+      server = r.headers()['server'] || '';
+      if (server.match(/SimpleHTTP/i)) break;
+      await new Promise(r => setTimeout(r, 500));
+    }
+    expect(server).toMatch(/SimpleHTTP/i);
   });
 
   test('F6 DELETE removes service and Caddy route', async ({ request }) => {

@@ -14,8 +14,10 @@
 {
 	# Don't try to use Let's Encrypt — we have a Tailscale cert.
 	auto_https off
-	# Quiet down the admin endpoint by default; flip to localhost:2019 if needed.
-	admin off
+	# Admin on loopback only — the dashboard uses it to `caddy reload` after
+	# rewriting the services block. (--watch on macOS proved unreliable; the
+	# admin-API reload is deterministic.)
+	admin localhost:2019
 }
 
 # HTTP -> HTTPS redirect (so the user can type the bare hostname).

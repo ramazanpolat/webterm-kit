@@ -26,26 +26,37 @@ cleanup() {
       tmux kill-session -t "$session" 2>/dev/null && echo "  killed tmux session $session"
     fi
   done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null)
-  # Sweep any leftover services with our run-id prefix in case the spec
-  # crashed before its own cleanup ran.
+  # Sweep any leftover services with test prefixes (exhaust-, pw-) in case
+  # a spec crashed before its own cleanup ran. Tries the API first; if Caddy
+  # is down (connection refused), falls back to editing services.json.
   if [[ -f "$HOME/.webterm-kit/services.json" ]]; then
     python3 - "$HOME/.webterm-kit/services.json" <<'PYEOF'
 import json, sys, urllib.request, ssl
 path = sys.argv[1]
 data = json.load(open(path))
-keep = [s for s in data.get('services', []) if not s.get('name', '').startswith('exhaust-')]
-removed = [s['name'] for s in data.get('services', []) if s.get('name', '').startswith('exhaust-')]
-if removed:
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    for name in removed:
+def istest(s):
+    n = s.get('name', '')
+    return n.startswith('exhaust-') or n.startswith('pw-')
+keep = [s for s in data.get('services', []) if not istest(s)]
+removed = [s['name'] for s in data.get('services', []) if istest(s)]
+if not removed:
+    sys.exit(0)
+ctx = ssl.create_default_context()
+ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+api_works = True
+for name in removed:
+    if api_works:
         req = urllib.request.Request(
             f'https://macminim.tailad422.ts.net/api/services?name={name}',
             method='DELETE')
         try: urllib.request.urlopen(req, context=ctx, timeout=2)
-        except Exception: pass
-        print(f'  cleaned leftover service: {name}')
+        except Exception: api_works = False
+    print(f'  cleaned leftover service: {name}')
+if not api_works:
+    # Direct edit since the API was unreachable.
+    data['services'] = keep
+    json.dump(data, open(path, 'w'), indent=2)
+    print('  (edited services.json directly — Caddy was down)')
 PYEOF
   fi
 }
@@ -64,7 +75,7 @@ echo "  pid $SERVER_PID listening"
 echo "==> running exhaustive Playwright spec"
 cd "$ROOT/test/browser"
 rm -rf screenshots
-npx playwright test exhaustive.spec.js --reporter=line "$@"
+INCLUDE_EXTENDED=1 npx playwright test exhaustive.spec.js --reporter=line "$@"
 RC=$?
 
 if (( RC == 0 )); then
