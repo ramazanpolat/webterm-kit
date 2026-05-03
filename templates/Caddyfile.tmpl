@@ -35,12 +35,16 @@ https://__TAILNET_HOST__:443, https://__BIND_IP__:443 {
 
 	# --- tmux namespace ----------------------------------------------
 	# /tmux/<name>/ → attach (or create) tmux session <name> via the chooser's
-	# auto-attach mode. 302 redirect (URL becomes /chooser/?arg=<name>); keeping
-	# the URL stable would need a per-session ttyd, which isn't worth the
-	# complexity for a dynamic set of sessions.
+	# auto-attach mode. URL becomes /chooser/?arg=<name> after the 302; keeping
+	# it stable at /tmux/<name>/ would need a per-session ttyd, not worth it.
+	#
+	# We use `header Location` + `respond` rather than `redir` because Caddy's
+	# `redir` directive silently emits an empty 200 when the target contains a
+	# bare `?` — see commit history. This form is bulletproof.
 	@tmux_named path_regexp tmux_named ^/tmux/([^/]+)/?$
 	handle @tmux_named {
-		redir /chooser/?arg={re.tmux_named.1} 302
+		header Location "/chooser/?arg={re.tmux_named.1}"
+		respond "" 302
 	}
 	# Note: /tmux and /tmux/ (no name) fall through to the dashboard catch-all,
 	# which serves an HTML list view of tmux sessions.
