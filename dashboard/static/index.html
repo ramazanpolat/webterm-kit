@@ -6,25 +6,29 @@
 <title>kit</title>
 <style>
   :root {
-    --bg: #0b0d12;
-    --bg-elev: #131720;
-    --fg: #d7dde6;
-    --fg-dim: #7d8694;
-    --fg-faint: #4a5260;
-    --rule: #1f2530;
-    --rule-bright: #2a3140;
-    --accent: #82b1ff;
-    --green: #5dd39e;
-    --amber: #f0b86e;
-    --red: #ff7777;
+    --bg: #0a0c10;
+    --bg-elev: #161a23;
+    --fg: #f0f4fa;          /* brighter — was #d7dde6 */
+    --fg-dim: #b0b8c5;      /* brighter — was #7d8694 */
+    --fg-faint: #6c7484;    /* brighter — was #4a5260 */
+    --rule: #232a36;
+    --rule-bright: #38415247;
+    --accent: #9ec5ff;      /* brighter blue */
+    --accent-strong: #c1d6ff;
+    --green: #6ee0a8;       /* brighter */
+    --amber: #ffc977;
+    --red: #ff8888;
     --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    --fs-base: 16px;        /* was 14 */
+    --fs-small: 13px;
+    --fs-tiny: 12px;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; }
   body {
     background: var(--bg);
     color: var(--fg);
-    font: 14px/1.5 var(--mono);
+    font: var(--fs-base)/1.5 var(--mono);
     min-height: 100vh;
   }
   a { color: var(--accent); text-decoration: none; }
@@ -36,18 +40,45 @@
     border-bottom: 1px solid var(--rule);
     padding: 14px 24px;
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 24px;
     flex-wrap: wrap;
   }
   header .brand {
-    font-weight: 600;
-    font-size: 15px;
-    letter-spacing: 0.02em;
+    font-weight: 700;
+    font-size: 18px;            /* was 15 */
+    letter-spacing: 0.01em;
     color: var(--fg);
   }
   header .brand .prompt { color: var(--accent); margin-right: 6px; }
-  header .meta { color: var(--fg-faint); font-size: 12px; margin-left: auto; }
+  header .brand .host {
+    color: var(--fg-dim);
+    font-weight: 400;
+    margin-left: 8px;
+    font-size: 14px;
+  }
+
+  /* system stats bar — lives in the header on the right */
+  .sysbar {
+    margin-left: auto;
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .sysbar .stat {
+    color: var(--fg-dim);
+    font-size: var(--fs-small);
+    white-space: nowrap;
+  }
+  .sysbar .stat .label {
+    color: var(--fg-faint);
+    margin-right: 6px;
+  }
+  .sysbar .stat .val { color: var(--fg); font-weight: 600; }
+  .sysbar .stat.green .val { color: var(--green); }
+  .sysbar .stat.amber .val { color: var(--amber); }
+  .sysbar .stat.red   .val { color: var(--red); }
 
   /* --- tabs --- */
   nav.tabs {
@@ -59,23 +90,25 @@
     overflow-x: auto;
   }
   nav.tabs a {
-    padding: 12px 16px;
+    padding: 14px 20px;        /* was 12 16 */
     color: var(--fg-dim);
     border-bottom: 2px solid transparent;
     margin-bottom: -1px;
     white-space: nowrap;
-    font-size: 13px;
+    font-size: 15px;            /* was 13 */
     text-decoration: none;
+    font-weight: 500;
   }
   nav.tabs a:hover { color: var(--fg); text-decoration: none; }
   nav.tabs a.active {
-    color: var(--fg);
+    color: var(--accent-strong);
     border-bottom-color: var(--accent);
   }
   nav.tabs a .key {
     color: var(--fg-faint);
-    font-size: 11px;
-    margin-right: 6px;
+    font-size: var(--fs-tiny);
+    margin-right: 8px;
+    font-weight: 400;
   }
   nav.tabs a.active .key { color: var(--accent); }
 
@@ -90,22 +123,23 @@
 
   /* --- shared bits --- */
   .row-title {
-    color: var(--fg-faint);
+    color: var(--fg-dim);
     text-transform: uppercase;
-    font-size: 11px;
+    font-size: var(--fs-small);    /* was 11 */
     letter-spacing: 0.1em;
-    margin: 24px 0 10px;
+    margin: 28px 0 12px;
+    font-weight: 600;
   }
   .row-title:first-child { margin-top: 0; }
 
   .card {
     display: block;
-    padding: 14px 16px;
-    margin-bottom: 8px;
+    padding: 16px 20px;            /* was 14 16 */
+    margin-bottom: 10px;
     background: var(--bg-elev);
     border: 1px solid var(--rule);
-    border-left: 2px solid var(--rule-bright);
-    border-radius: 4px;
+    border-left: 3px solid var(--rule-bright);
+    border-radius: 5px;
     color: inherit;
     transition: border-color .12s, background .12s;
   }
@@ -120,10 +154,10 @@
     align-items: center;
     gap: 12px;
   }
-  .card .name { color: var(--fg); font-weight: 500; }
-  .card .desc { color: var(--fg-dim); font-size: 12px; margin-top: 4px; }
-  .card .meta { color: var(--fg-faint); font-size: 11px; flex-shrink: 0; }
-  .icon { display: inline-block; width: 18px; text-align: center; margin-right: 6px; }
+  .card .name { color: var(--fg); font-weight: 600; font-size: 16px; } /* was 14, 500 */
+  .card .desc { color: var(--fg-dim); font-size: var(--fs-small); margin-top: 6px; }
+  .card .meta { color: var(--fg-dim); font-size: var(--fs-small); flex-shrink: 0; }
+  .icon { display: inline-block; width: 20px; text-align: center; margin-right: 8px; font-size: 16px; }
 
   /* status dot */
   .dot {
@@ -141,11 +175,12 @@
 
   /* status pill */
   .pill {
-    font-size: 11px;
-    padding: 1px 7px;
-    border-radius: 9px;
+    font-size: 12px;             /* was 11 */
+    padding: 2px 9px;
+    border-radius: 10px;
     border: 1px solid var(--rule-bright);
     color: var(--fg-dim);
+    font-weight: 500;
   }
   .pill.green { color: var(--green); border-color: var(--green); }
 
@@ -210,18 +245,32 @@
   footer {
     border-top: 1px solid var(--rule);
     padding: 14px 24px;
-    color: var(--fg-faint);
-    font-size: 11px;
+    color: var(--fg-dim);             /* brighter — was faint */
+    font-size: var(--fs-tiny);
     text-align: center;
   }
-  footer code { color: var(--fg-dim); }
+  footer code {
+    color: var(--accent);
+    background: var(--bg-elev);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
 </style>
 </head>
 <body>
 
 <header>
-  <div class="brand"><span class="prompt">$</span>kit</div>
-  <span class="meta" id="meta-line"></span>
+  <div class="brand">
+    <span class="prompt">$</span>kit<span class="host" id="hostname"></span>
+  </div>
+  <div class="sysbar" id="sysbar">
+    <span class="stat" id="sys-cpu"><span class="label">cpu</span><span class="val">—</span></span>
+    <span class="stat" id="sys-ram"><span class="label">mem</span><span class="val">—</span></span>
+    <span class="stat" id="sys-disk"><span class="label">disk</span><span class="val">—</span></span>
+    <span class="stat" id="sys-load"><span class="label">load</span><span class="val">—</span></span>
+    <span class="stat" id="sys-up"><span class="label">up</span><span class="val">—</span></span>
+    <span class="stat"><span class="label">srv</span><span class="val" id="meta-line">—</span></span>
+  </div>
 </header>
 
 <nav class="tabs" id="tabs">
@@ -402,8 +451,9 @@
       renderServiceTab('storage',  services);
       renderServiceTab('media',    services);
       errEl.hidden = true;
+      // compact tally: 4s/2p/3v (sessions/playbooks/services)
       $('meta-line').textContent =
-        `${(sess.sessions || []).length} sessions · ${(sess.playbooks || []).length} playbooks · ${services.length} services`;
+        `${(sess.sessions || []).length}s/${(sess.playbooks || []).length}p/${services.length}v`;
     } catch (e) {
       errEl.textContent = 'load failed: ' + e.message;
       errEl.hidden = false;
@@ -418,10 +468,61 @@
     return false;
   }
 
+  // ---------- system stats ----------
+  function fmtUptime(sec) {
+    if (!sec) return '—';
+    const d = Math.floor(sec / 86400);
+    const h = Math.floor((sec % 86400) / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+  }
+
+  function levelClass(value, amber, red) {
+    if (value >= red)   return 'red';
+    if (value >= amber) return 'amber';
+    return 'green';
+  }
+
+  function setStat(id, valueText, level) {
+    const el = $(id);
+    el.querySelector('.val').textContent = valueText;
+    el.classList.remove('green', 'amber', 'red');
+    if (level) el.classList.add(level);
+  }
+
+  async function loadSystem() {
+    try {
+      const r = await fetch('/api/system');
+      if (!r.ok) return;
+      const s = await r.json();
+      setStat('sys-cpu', `${s.cpuPct.toFixed(0)}%`,
+              levelClass(s.cpuPct, 60, 85));
+      const memPct = s.ramTotalGB > 0 ? (s.ramUsedGB / s.ramTotalGB * 100) : 0;
+      setStat('sys-ram', `${s.ramUsedGB.toFixed(1)}/${s.ramTotalGB.toFixed(0)}G`,
+              levelClass(memPct, 70, 90));
+      const diskPct = s.diskTotalGB > 0 ? ((s.diskTotalGB - s.diskFreeGB) / s.diskTotalGB * 100) : 0;
+      setStat('sys-disk', `${s.diskFreeGB.toFixed(0)}G free`,
+              levelClass(diskPct, 75, 90));
+      // Load is normalized against rough thresholds — anything > 4 starts to feel hot.
+      setStat('sys-load', s.load1.toFixed(2),
+              levelClass(s.load1, 4, 8));
+      setStat('sys-up', fmtUptime(s.uptimeSec));
+    } catch (e) {}
+  }
+
   // ---------- boot ----------
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { load(); loadSystem(); }
+  });
   setActiveTab(window.location.hash.replace('#', '') || 'webterm');
   load();
+  loadSystem();
+  setInterval(loadSystem, 5000);   // refresh stats every 5s
+  setInterval(load, 30000);        // refresh sessions every 30s
+  // Try to show the host name in the brand if Caddy populated it on the request.
+  $('hostname').textContent = window.location.hostname ? '@ ' + window.location.hostname.split('.')[0] : '';
 </script>
 </body>
 </html>

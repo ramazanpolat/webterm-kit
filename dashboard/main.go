@@ -11,8 +11,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -226,6 +228,133 @@ func statusEntries(playbooksDir string) []StatusEntry {
 	return out
 }
 
+// SystemStats is a cheap snapshot of host vitals shown in the dashboard
+// header bar. Refreshed at most every 3 seconds (cached) regardless of how
+// often the SPA polls. All fields default to 0 if their probe fails — never
+// fatal, never log spam.
+type SystemStats struct {
+	CPUPercent  float64 `json:"cpuPct"`
+	RAMUsedGB   float64 `json:"ramUsedGB"`
+	RAMTotalGB  float64 `json:"ramTotalGB"`
+	DiskFreeGB  float64 `json:"diskFreeGB"`
+	DiskTotalGB float64 `json:"diskTotalGB"`
+	Load1       float64 `json:"load1"`
+	UptimeSec   int64   `json:"uptimeSec"`
+}
+
+var (
+	statsCacheMu      sync.Mutex
+	statsCache        SystemStats
+	statsCacheFetched time.Time
+)
+
+func systemStats() SystemStats {
+	statsCacheMu.Lock()
+	defer statsCacheMu.Unlock()
+	if !statsCacheFetched.IsZero() && time.Since(statsCacheFetched) < 3*time.Second {
+		return statsCache
+	}
+	var s SystemStats
+	s.CPUPercent, s.RAMUsedGB, s.RAMTotalGB = topStats()
+	s.DiskFreeGB, s.DiskTotalGB = dfStats("/")
+	s.Load1 = loadAvg()
+	s.UptimeSec = uptimeSec()
+	statsCache = s
+	statsCacheFetched = time.Now()
+	return s
+}
+
+// topStats parses one `top -l 1 -n 0 -s 0` invocation for both CPU% and
+// RAM. Bundling lets us pay the ~200ms top startup cost once instead of
+// twice.
+func topStats() (cpuPct, ramUsedGB, ramTotalGB float64) {
+	out, err := exec.Command("top", "-l", "1", "-n", "0", "-s", "0").Output()
+	if err != nil {
+		return
+	}
+	s := string(out)
+	if m := regexp.MustCompile(`CPU usage:\s+([\d.]+)% user,\s+([\d.]+)% sys`).FindStringSubmatch(s); len(m) >= 3 {
+		var user, sys float64
+		fmt.Sscanf(m[1], "%f", &user)
+		fmt.Sscanf(m[2], "%f", &sys)
+		cpuPct = user + sys
+	}
+	// Lines look like: "PhysMem: 12G used (1825M wired, 4147M compressor), 3814M unused."
+	if m := regexp.MustCompile(`PhysMem:\s+([\d.]+)([KMG])\s+used.*?([\d.]+)([KMG])\s+unused`).FindStringSubmatch(s); len(m) >= 5 {
+		usedB := parseSize(m[1], m[2])
+		unusedB := parseSize(m[3], m[4])
+		ramUsedGB = usedB / (1024 * 1024 * 1024)
+		ramTotalGB = (usedB + unusedB) / (1024 * 1024 * 1024)
+	}
+	return
+}
+
+func parseSize(numStr, unit string) float64 {
+	var n float64
+	fmt.Sscanf(numStr, "%f", &n)
+	switch unit {
+	case "G":
+		n *= 1024 * 1024 * 1024
+	case "M":
+		n *= 1024 * 1024
+	case "K":
+		n *= 1024
+	}
+	return n
+}
+
+func dfStats(path string) (freeGB, totalGB float64) {
+	out, err := exec.Command("df", "-k", path).Output()
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(out), "\n")
+	if len(lines) < 2 {
+		return
+	}
+	f := strings.Fields(lines[1])
+	if len(f) < 4 {
+		return
+	}
+	var total, avail int64
+	fmt.Sscanf(f[1], "%d", &total)
+	fmt.Sscanf(f[3], "%d", &avail)
+	totalGB = float64(total) / (1024 * 1024)
+	freeGB = float64(avail) / (1024 * 1024)
+	return
+}
+
+func loadAvg() float64 {
+	out, err := exec.Command("sysctl", "-n", "vm.loadavg").Output()
+	if err != nil {
+		return 0
+	}
+	// Output: "{ 1.40 1.50 1.60 }"
+	s := strings.Trim(strings.TrimSpace(string(out)), "{ }")
+	f := strings.Fields(s)
+	if len(f) < 1 {
+		return 0
+	}
+	var v float64
+	fmt.Sscanf(f[0], "%f", &v)
+	return v
+}
+
+func uptimeSec() int64 {
+	out, err := exec.Command("sysctl", "-n", "kern.boottime").Output()
+	if err != nil {
+		return 0
+	}
+	// Output: "{ sec = 1234567890, usec = 0 } Wed May  3 ..."
+	m := regexp.MustCompile(`sec\s*=\s*(\d+)`).FindStringSubmatch(string(out))
+	if len(m) < 2 {
+		return 0
+	}
+	var sec int64
+	fmt.Sscanf(m[1], "%d", &sec)
+	return time.Now().Unix() - sec
+}
+
 // sessionPIDs returns map[session_name] -> session_group_pid. tmux exposes the
 // group/server pid via #{pid} on the session.
 func sessionPIDs() map[string]int {
@@ -298,6 +427,12 @@ func main() {
 			"now":     time.Now().Unix(),
 			"entries": statusEntries(*playbooksDir),
 		})
+	})
+
+	mux.HandleFunc("/api/system", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		json.NewEncoder(w).Encode(systemStats())
 	})
 
 	staticRoot, err := fs.Sub(staticFS, "static")
