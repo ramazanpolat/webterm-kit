@@ -210,6 +210,43 @@ The hard parts. These can't be reliably scripted because they exercise
 the browser's input-handling stack, font fallback, OS modifier mapping.
 Walk by hand or with an AI agent on a real keyboard.
 
+### Manual pass checklist (~5 minutes)
+
+The browser-harness can verify config (T1, T7-config, T11-config) but not
+real OS-level keyboard / clipboard behavior. After any change to
+`templates/ttyd.sh.tmpl`, the chooser, the playbook wrappers, or
+anything xterm-adjacent, do this walk by hand on a real keyboard.
+
+Open `http://localhost:8080/chooser/?arg=manual` in your everyday
+browser (not an automation-driven one — clipboards differ). Then go
+through this list top to bottom, ticking each item:
+
+- [ ] **T1** Prompt is monospace, ~20px tall, bar cursor visible. Background near-black.
+- [ ] **T2** `printf '— ─ │ ┌─┐ │ │ └─┘ ⏺ ✻ ※\n'` — every glyph renders, no `?` boxes.
+- [ ] **T3** Press your `@` key — `@` appears.
+- [ ] **T4** Type `echo hello-clipboard` and run. Triple-click that line, **⌘C**, then **⌘V** in another app — text matches.
+- [ ] **T5** From another app, copy `paste-target`. Click terminal, **⌘V** — appears at prompt.
+- [ ] **T6** Right-click the terminal — native menu shows Paste; works.
+- [ ] **T7** Type `the quick brown fox`, then **⌥B** — cursor jumps back one word. **⌥F** jumps forward one word. (Readline meta-b / meta-f.)
+- [ ] **T8** Press **⌥E**, then any letter — emits Readline meta-binding (often invisible), NOT a dead-key combo (`´e` → `é`). If you see `é`, `macOptionIsMeta` is broken.
+- [ ] **T9** Run `yes`. **⌃C** stops it. Then **⌃L** clears, **⌃A** goes to line start, **⌃E** to end.
+- [ ] **T10** Type `foo bar baz`, **⌃W** — `baz` gone. Type more, **⌥⌫** — last word gone.
+- [ ] **T11** `seq 1 20000`, scroll up with mouse wheel — old lines visible up to ~10k back. The terminal scrolls, not the page.
+- [ ] **T12** Resize the browser narrower; `tput cols` reflects it.
+- [ ] **T13** With an active session, **⌘R** — reattaches cleanly, no "Connection lost" banner.
+- [ ] **T14** Kill the backend ttyd from another shell — no `confirm()` "Are you sure" dialog.
+- [ ] **T15** Background is near-black (`#0b0b0f`), not white.
+
+If any item fails, file a bug with the case ID and what you saw.
+
+**Why this is manual:** the CDP-driven browser-harness fires a `char`
+event after `keyDown` for letter keys regardless of modifiers, so
+**⌥B** types `b`, **⌃L** types `l`, **⇧2** types `2` (not `@`). And
+clipboard tests need a real OS clipboard. The harness does cover the
+xterm.js *configuration* (T1, T7-config, T11-config, T15) — see the
+walk log below — so a manual pass after a change to the templates
+takes the rest.
+
 #### T1. Terminal renders with a monospace font
 - **Steps**: Open `/chooser/`. Look at the prompt.
 - **Expected**: monospace, ~20px (`fontSize=20`), bar cursor that blinks. The font is **Menlo** if available; the fallback chain is in `templates/ttyd.sh.tmpl`.
