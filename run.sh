@@ -46,6 +46,11 @@ DASHBOARD_PORT="${DASHBOARD_PORT:-8021}"
 PLAYBOOK_PORT_BASE="${PLAYBOOK_PORT_BASE:-8030}"
 ADMIN_PORT="${ADMIN_PORT:-2020}"   # Caddy admin (different from installed Caddy's :2019)
 
+# macOptionIsMeta: see install.sh for the full explanation. Default false so
+# non-US layouts (Turkish-Q, German, French, etc.) can type characters that
+# require Option as a modifier — Option+Q for @ on Turkish-Q, etc.
+MAC_OPTION_IS_META="${MAC_OPTION_IS_META:-false}"
+
 c_red()    { printf "\033[31m%s\033[0m" "$1"; }
 c_green()  { printf "\033[32m%s\033[0m" "$1"; }
 c_yellow() { printf "\033[33m%s\033[0m" "$1"; }
@@ -233,7 +238,7 @@ TTYD_FLAGS=(
   -t rendererType=dom
   -t cursorBlink=true
   -t cursorStyle=bar
-  -t macOptionIsMeta=true
+  -t "macOptionIsMeta=$MAC_OPTION_IS_META"
   -t scrollback=10000
   -t disableLeaveAlert=true
   -t 'theme={"background": "#0b0b0f"}'
@@ -347,4 +352,11 @@ echo
 # --- Caddy in the foreground (Ctrl-C delivers SIGINT here, then trap fires) ---
 # --adapter caddyfile is implicit when the file matches the canonical name; we
 # pass it explicitly so the .dev suffix doesn't confuse the adapter.
-exec caddy run --config "$CADDYFILE" --adapter caddyfile
+#
+# NOTE: NOT `exec` — exec would replace the shell with Caddy, which means the
+# EXIT trap never fires and all the backgrounded ttyds + dashboard survive
+# Ctrl-C as orphans. Run Caddy as a child, wait on it, let the trap clean up.
+caddy run --config "$CADDYFILE" --adapter caddyfile &
+CADDY_PID=$!
+PIDS+=("$CADDY_PID")
+wait "$CADDY_PID"

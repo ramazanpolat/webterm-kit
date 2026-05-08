@@ -258,9 +258,17 @@ takes the rest.
   ```
 - **Expected**: every glyph is visible. No `?` boxes, no underscores standing in for failed glyphs (a known regression from missing `LANG=en_US.UTF-8`).
 
-#### T3. The `@` character types
-- **Steps**: Click into the terminal. Press `Shift+2` (US) or your `@` key.
-- **Expected**: `@` appears at the cursor. (User flagged this; some Mac layouts route `@` through the dead-key system.)
+#### T3. The `@` character types (and other Option-required chars on non-US layouts)
+- **Steps**: Click into the terminal. Press your `@` key. If you're on a US
+  layout, that's `Shift+2`. If you're on Turkish-Q, German, French, Spanish,
+  Polish, Czech, or any layout where `@` (or `#`, `$`, `{`, `}`, `[`, `]`)
+  needs **Option** as a modifier, press your normal sequence — e.g. **⌥Q**
+  on Turkish-Q for `@`.
+- **Expected**: the character appears at the cursor.
+- **Catches**: `macOptionIsMeta=true` swallowing the Option-modified key
+  before the OS layout produces the character. Default in webterm-kit is now
+  `MAC_OPTION_IS_META=false` so all layouts work; US users who want Option-as-Meta
+  Readline shortcuts (Option+B/F/D) opt in via env: `MAC_OPTION_IS_META=true ./run.sh`.
 
 #### T4. Copy with ⌘C from the terminal
 - **Steps**: Run `echo hello-clipboard`. Triple-click the line. Press **⌘C**. Paste into a separate text app.
@@ -293,8 +301,18 @@ takes the rest.
 - **Expected**: both delete one word back. (⌥⌫ tests Option-as-Meta integration.)
 
 #### T11. Scrollback works
-- **Steps**: Run `seq 1 20000`. Scroll up.
-- **Expected**: lines visible up to the configured scrollback (`scrollback=10000` per template). Mouse wheel scrolls inside the terminal, not the page.
+- **Steps**: Run `seq 1 20000`. Scroll up using the mouse wheel inside the
+  terminal area.
+- **Expected**: lines visible up to the configured scrollback (`scrollback=10000`
+  per template). Mouse wheel scrolls inside the terminal, not the page.
+- **Known interaction**: every chooser/playbook session is wrapped in tmux,
+  and tmux grabs the terminal's alt buffer + mouse mode. If your `~/.tmux.conf`
+  has `set -g mouse off` (or the line is missing entirely — `off` is tmux's
+  default), wheel events are passed through to the running app as Up/Down
+  arrow keys, which zsh/bash interprets as `up-line-or-history`. To get
+  scrollback in webterm-kit, **add `set -g mouse on` to `~/.tmux.conf`** and
+  detach + reattach. Alternatively, use tmux's built-in copy-mode (`Ctrl-B [`)
+  to scroll with arrow keys / page-up.
 
 #### T12. Resize is honored
 - **Steps**: Resize the browser window narrower / taller.
@@ -456,6 +474,9 @@ Setup: `./run.sh` (after the `local name=…` fix) on `localhost:8080`,
 - **B4** (workaround): portable Caddy logs `permission denied` writing to `~/Library/Application Support/Caddy/` when that path was previously created root-owned by an installed-mode Caddy daemon. Cosmetic in portable mode (Caddy still serves), but noisy. Workaround: `sudo chown -R $USER ~/Library/Application\ Support/Caddy/`. Not yet fixed in `run.sh`; could pass `XDG_DATA_HOME=$ROOT/generated/caddy` to keep it self-contained.
 - **B5** (won't-fix on macOS): port 8021 wedged via `launchd:1` LISTEN ghost from a prior install/uninstall cycle. Survives every `launchctl bootout` and plist removal. Cleared only by reboot. Documented in TEST-PLAN N5 and run.sh's diagnostic warning.
 - **B6** (config drift): `cursorBlink=true` in `templates/ttyd.sh.tmpl`, but `_core.options.cursorBlink == false` at runtime. Likely xterm.js 5.x option-name change or default override. Cosmetic; cursor still visible. Worth a one-line investigation.
+- **B7** (fixed): `macOptionIsMeta=true` was hardcoded in the ttyd template. Broke `@` (and other Option-modified characters) on Turkish-Q / German / French / Spanish / Polish / Czech keyboards — xterm.js intercepted the Option modifier before the OS layout produced the symbol. Found during the manual T3 walk on a Turkish-Q keyboard. Fix: templated as `__MAC_OPTION_IS_META__`, env-var configurable in both `install.sh` and `run.sh`, default flipped to `false` (works for everyone). US users who want Option-as-Meta Readline shortcuts opt in: `MAC_OPTION_IS_META=true ./run.sh`. Test: T3.
+- **B8** (interaction, documented): mouse wheel in the terminal navigates command history instead of scrolling. Root cause is **not webterm-kit** — chooser/playbook sessions wrap in tmux, tmux uses the alt buffer with mouse mode, and `set -g mouse off` (the tmux default) causes xterm.js to translate wheel into Up/Down arrows that zsh sees as `up-line-or-history`. Fix is in the *user's* `~/.tmux.conf`: `set -g mouse on`. Documented in T11 and surfaced here so it doesn't get re-reported. Found during the manual T11 walk.
+- **B9** (fixed): `run.sh` ended with `exec caddy run …`, which replaces the shell with Caddy. When the user pressed Ctrl-C, Caddy exited cleanly but the shell was already gone — so the EXIT/INT/TERM trap never fired and every backgrounded ttyd + the dashboard survived as orphan processes. Fix: run Caddy as a child (`caddy run … & wait $!`) so the shell stays alive to handle the trap. Verified: after Ctrl-C, `pgrep` shows no straggler ttyd / dashboard / Caddy processes. Test: G3.
 
 #### Browser-harness limitations (worth knowing for future walks)
 

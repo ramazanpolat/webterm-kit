@@ -154,6 +154,15 @@ CHOOSER_PORT=8020
 DASHBOARD_PORT="${DASHBOARD_PORT:-8021}"
 PLAYBOOK_PORT_BASE=8030
 
+# macOptionIsMeta: when true, xterm.js converts Option+letter into Meta sequences
+# (Readline shortcuts like Option+B / Option+F). Great for US keyboards, but on
+# layouts that need Option for special chars (Turkish-Q uses Option+Q for @,
+# German uses Option for {, French/Spanish/Polish/Czech for various symbols),
+# enabling this BREAKS those characters because xterm.js eats Option before the
+# OS layout layer can produce the symbol. Default false so all keyboards work;
+# set MAC_OPTION_IS_META=true if you're on a US keyboard and want Option-as-Meta.
+MAC_OPTION_IS_META="${MAC_OPTION_IS_META:-false}"
+
 # Playbooks live under /playbook/<name>/ so they can't collide with top-level
 # routes. We still forbid '/' in playbook names just to keep paths well-formed.
 
@@ -240,6 +249,7 @@ render_ttyd_service() {
   sed -e "s|__PORT__|$port|g" \
       -e "s|__BASE_PATH__|$base_path|g" \
       -e "s|__CMD__|$cmd|g" \
+      -e "s|__MAC_OPTION_IS_META__|$MAC_OPTION_IS_META|g" \
       "$ROOT/templates/ttyd.sh.tmpl" > "$script"
   chmod +x "$script"
 
