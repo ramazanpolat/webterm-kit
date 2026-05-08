@@ -1,46 +1,57 @@
 # webterm-kit
 
-Reach your Mac's terminal from any device on your Tailnet — `tmux`, `zellij`, or
-[Claude Code](https://claude.com/claude-code) — through a browser. No GUI app, no
-public internet exposure, just `ttyd` + `tmux` + Tailscale + a Bubble Tea session
-chooser, all wired up by `launchd` so they survive reboots and crashes.
+Reach your Mac's terminal — `tmux` sessions, [Claude Code](https://claude.com/claude-code)
+playbooks, and any HTTP service you point at — from any device on your Tailnet,
+through a browser. No GUI app, no public internet exposure.
 
 ```
-                ┌─────────────────────────────────────┐
-   any device   │  https://mymac.tailXXXX.ts.net:8020 │ ← TUI chooser (Bubble Tea)
-   on Tailnet   │  https://mymac.tailXXXX.ts.net:8021 │ ← GUI dashboard (sessions+panes)
-                │  https://mymac.tailXXXX.ts.net:8022 │ ← tmux 'main'
-                │  https://mymac.tailXXXX.ts.net:8023 │ ← zellij  (if installed)
-                │  https://mymac.tailXXXX.ts.net:8024 │ ← claude  (if installed)
-                └─────────────────────────────────────┘
-                              │
-              ┌───────────────┴───────────────┐
-              ▼                               ▼
-   ttyd → tmux/zellij/claude          Go HTTPS service
-   (managed by launchd)               (dashboard, /api/sessions)
+   any device on Tailnet
+            │
+            ▼
+   ┌────────────────────────────┐
+   │  https://mymac.tailXX.ts.net/                  ← dashboard  │
+   │  https://mymac.tailXX.ts.net/chooser/          ← TUI picker │
+   │  https://mymac.tailXX.ts.net/tmux/<name>/      ← attach     │
+   │  https://mymac.tailXX.ts.net/playbook/<name>/  ← Claude     │
+   └─────────────────┬──────────────────────────────────────────┘
+                     │ Caddy on :443  (TLS via Tailscale cert)
+   ┌─────────────────┴────────────────────────────────────┐
+   ▼                          ▼                          ▼
+   ttyd (chooser)      ttyd × N (one per playbook)   Go dashboard
+   127.0.0.1:8020      127.0.0.1:8030+               127.0.0.1:8021
+                       (each wraps tmux + claude)
 ```
+
+Everything binds `127.0.0.1`. **Caddy on `:443` is the only internet-facing
+process**, and it terminates TLS with the cert your Tailnet already gives you.
 
 ## What you get
 
-- **Browser-accessible terminal** over your Tailnet (HTTPS via Tailscale-issued certs).
-- **Two session pickers, same backend**:
-  - **TUI chooser** (Go + Bubble Tea) for keyboard-first attach/create.
-  - **GUI dashboard** (Go HTTPS + tiny vanilla SPA) listing every session and its
-    panes. Click a card to redirect into the chooser with that session pre-attached.
-    No terminals are rendered in the GUI — it's a launcher, not a multiplexer.
-- **launchd services** with `KeepAlive` and `RunAtLoad` so everything starts
-  at login and respawns if it crashes.
-- **Hard-reload-resistant Unicode**: ships with a sane `fontFamily` chain so em
-  dashes, box-drawing, and warning glyphs render in the browser.
+- **Browser-accessible terminals** over your Tailnet, HTTPS only.
+- **One URL per thing**, no port numbers to remember:
+  - `/` — dashboard (launcher with tabs for terminals, services, storage, media)
+  - `/chooser/` — Bubble Tea TUI session picker
+  - `/tmux/<name>/` — attach (or create) tmux session `<name>`
+  - `/playbook/<name>/` — that Claude playbook in its own tmux-wrapped ttyd
+  - `/<your-service>/` — anything you put in `~/.webterm-kit/services.json`
+- **launchd-managed**, so it survives reboots and crashes.
+- **Auto-discovery** of `~/.claude-playbooks/*/CLAUDE.md` — drop a folder,
+  re-run `./install.sh`, get a new URL.
 
 ## Requirements
 
-- macOS (uses `launchd`)
-- [Tailscale](https://tailscale.com/) — installed and logged in
-- [`ttyd`](https://github.com/tsl0922/ttyd) — `brew install ttyd`
-- [`tmux`](https://github.com/tmux/tmux) — `brew install tmux`
-- [Go](https://go.dev/) 1.22+ — `brew install go` (only needed at install time, to build the chooser)
-- Optional: `zellij` (`brew install zellij`), `claude` (the CLI)
+| | |
+|---|---|
+| macOS | uses `launchd` |
+| [Tailscale](https://tailscale.com/) | provides the hostname + TLS cert (or place certs manually — see below) |
+| `ttyd` | `brew install ttyd` |
+| `tmux` | `brew install tmux` |
+| `caddy` | `brew install caddy` (TLS terminator on `:443`) |
+| Go 1.22+ | `brew install go` (build-time only) |
+| `python3` | ships with macOS Command Line Tools (parses `services.json`) |
+
+`./install.sh` checks every one of these and exits with the right `brew install`
+hint if anything is missing.
 
 ## Install
 
@@ -50,21 +61,56 @@ cd webterm-kit
 ./install.sh
 ```
 
-The installer will:
+The installer:
 
-1. Detect your tailnet hostname and IP (you can override).
-2. Issue a TLS cert via `tailscale cert` if one isn't present.
-3. Build the Go chooser and dashboard binaries.
-4. Generate per-port `ttyd` shell scripts and `launchd` plists, plus a standalone
-   plist for the dashboard HTTPS service.
-5. `launchctl bootstrap` each service so it starts immediately and at every login.
+1. Verifies prereqs and detects your Tailnet hostname + IP (override at the prompt).
+2. Issues a TLS cert via `tailscale cert` if one isn't already at
+   `~/.tailscale-certs/<host>.{crt,key}`.
+3. Builds the Go `chooser` and `dashboard` binaries.
+4. Renders per-service shell wrappers + launchd plists into `generated/` and
+   `~/Library/LaunchAgents/`, then `launchctl bootstrap`s each one.
+5. Renders `generated/Caddyfile`.
+6. **Caddy is the one step that needs `sudo`** (it binds `:80`/`:443`). The
+   installer offers to run the bootstrap for you, or prints the exact commands
+   if you'd rather do it yourself.
 
-When it finishes you'll see the URLs to open. The dashboard and TUI chooser are
-the ones worth bookmarking — both let every tab pick its own session.
+When it finishes you'll see the full URL list. Bookmark `/` (the dashboard).
+
+### Install without Tailscale
+
+You can skip Tailscale and bring your own cert. Set `TAILNET_HOST` and `BIND_IP`
+in the env, place a cert pair at `~/.tailscale-certs/$TAILNET_HOST.crt` and
+`.key` (any PEM cert works — name them this way), and `./install.sh` will use them.
+
+```bash
+TAILNET_HOST=mymac.local BIND_IP=192.168.1.20 ./install.sh
+```
+
+### Re-run any time
+
+`install.sh` is idempotent. Re-run after:
+
+- editing templates or `install.sh`
+- adding/removing playbooks under `~/.claude-playbooks/`
+- editing `~/.webterm-kit/services.json`
+
+Caddy runs with `--watch`, so re-rendering the Caddyfile is enough — no Caddy
+restart needed.
+
+## Uninstall
+
+```bash
+./uninstall.sh           # remove user services + generated files
+./uninstall.sh --purge   # also remove Caddy daemon and ~/.webterm-kit
+```
+
+`--purge` will prompt for sudo (to remove the system Caddy daemon) and will
+**not** touch `~/.claude-playbooks/` or `~/.tailscale-certs/`.
 
 ## Manage services
 
-`launchctl` is to launchd what `systemctl` is to systemd:
+`launchctl` is to launchd what `systemctl` is to systemd. User services are
+labeled `com.webterm.<port>` (e.g. `com.webterm.8020` is the chooser):
 
 | systemd | launchd |
 |---|---|
@@ -75,49 +121,78 @@ the ones worth bookmarking — both let every tab pick its own session.
 | `systemctl disable foo`  | `launchctl bootout gui/$UID/foo`       |
 | `journalctl -u foo`      | `tail -f ~/Library/Logs/foo.log`       |
 
-Labels are `com.webterm.<port>` by default (override with `LABEL_PREFIX` env var
-when running `install.sh`).
+Caddy is a **system** daemon (it binds privileged ports), so substitute
+`system/com.webterm.caddy` and prepend `sudo`.
 
-## Uninstall
+Override the prefix with `LABEL_PREFIX=org.example ./install.sh`.
 
-```bash
-./uninstall.sh
+## Adding a service
+
+`~/.webterm-kit/services.json` is the only file you edit by hand. Each entry
+becomes a card on the dashboard; if you give it a `proxy_to`, install.sh adds a
+Caddy `reverse_proxy` block so it lives under your hostname.
+
+```json
+{
+  "services": [
+    {
+      "name": "jellyfin",
+      "category": "media",
+      "icon": "🎬",
+      "url": "/jellyfin/",
+      "proxy_to": "127.0.0.1:8096"
+    },
+    {
+      "name": "github",
+      "category": "services",
+      "icon": "🐙",
+      "url": "https://github.com"
+    }
+  ]
+}
 ```
 
-Boots out the launchd services and removes generated scripts/plists. Logs and
-the cloned repo stay where they are.
+Re-run `./install.sh` to wire it in. See `services.example.json` for the full
+schema.
 
-## Customizing
+## Verifying it works
 
-The ttyd-backed services installed by default are defined as a list in
-`install.sh` (`SERVICES=(...)`). Drop a port, change a command, or add new
-services there; re-run `./install.sh` and the change takes effect (it's
-idempotent). The standalone dashboard is configured separately via the
-`DASHBOARD_PORT` variable in `install.sh` (set it to empty to skip).
+```bash
+./test/smoke.sh                          # ~5s, no browser deps
+TAILNET_HOST=mymac.local ./test/smoke.sh # against a different host
+./test/run-all.sh                        # smoke + Playwright SPA tests
+```
 
-To use different ttyd flags (font, theme, key bindings), edit
-`templates/ttyd.sh.tmpl`. xterm.js options go after `-t`. The template
-includes `-a` so URL `?arg=<session>` is appended to the spawned command —
-this is what lets the dashboard deep-link into the chooser.
+`smoke.sh` hits every Caddy route and every `/api/*` endpoint with `curl`,
+including a POST/DELETE round-trip on `/api/services`. It's the fastest way to
+confirm a fresh install actually works end-to-end.
 
-Source layout:
+## Source layout
 
-- `chooser/main.go` — Bubble Tea TUI, ~200 lines. Auto-attaches when given a
-  session name as `argv[1]`; otherwise shows the picker.
-- `dashboard/main.go` + `dashboard/static/index.html` — Go HTTPS service that
-  shells `tmux list-sessions`/`list-panes` for `/api/sessions` and embeds a
-  vanilla-JS SPA. No frontend toolchain.
+| | |
+|---|---|
+| `install.sh` | the entry point — does everything |
+| `uninstall.sh` | reverses `install.sh` |
+| `chooser/main.go` | Bubble Tea TUI session picker |
+| `dashboard/main.go` | Go HTTP service (no toolchain) |
+| `dashboard/static/index.html` | vanilla-JS SPA, embedded into the binary at build |
+| `templates/*.tmpl` | rendered into `generated/` by `install.sh` |
+| `test/smoke.sh` | curl-driven regression tests |
+| `test/browser/` | Playwright SPA tests (Tier 2) |
+| `CLAUDE.md` | architecture deep-dive for AI coding assistants |
+| `DESIGN.md` | the v3 UI brief |
+| `CODEWIKI.md` | code reference, generated |
 
-## Why not cmux / wetty / shell-in-a-box / VS Code Tunnels?
+## Why not cmux / wetty / VS Code Tunnels?
 
-- **cmux** — beautiful but a desktop GUI, so only useful when you're at the Mac.
-- **wetty** — works, but no per-tab session chooser and no ergonomic launchd recipe.
-- **VS Code Tunnels** — great for editing, awkward for ad-hoc shell work.
+- **cmux** — desktop GUI, only useful when you're at the Mac.
+- **wetty** — works, but no per-tab session chooser and no launchd recipe.
+- **VS Code Tunnels** — great for editing, awkward for shell work.
 - **shell-in-a-box** — unmaintained.
 
-This is the smallest amount of glue I could find to get a browser-accessible
-multiplexer that feels native, behaves itself across reboots, and lets each
-tab live in its own world.
+webterm-kit is the smallest amount of glue I could find to get a
+browser-accessible multiplexer that feels native, behaves itself across
+reboots, and lets each tab live in its own world.
 
 ## License
 

@@ -1,13 +1,33 @@
 #!/usr/bin/env bash
-# webterm-kit installer (v2). macOS only.
+# webterm-kit installer. macOS only.
 # Run from inside the cloned repo: ./install.sh
 #
-# v2 changes vs v1:
+# What it does:
 #   - Auto-discovers playbooks under ~/.claude-playbooks/ (each becomes one
 #     ttyd-backed Claude session, tmux-wrapped for resilience).
 #   - Caddy on :443 fronts everything with path routing — no port to remember.
 #   - Writes ~/.claude-profile/machines/<host>.md so playbooks can @import host info.
+#
+# Flags:
+#   --help     print this and exit
+#   --dry-run  show what would happen, touch nothing (no go build, no
+#              launchctl, no plist writes)
+#   --yes      skip the "Proceed?" confirmation
 set -euo pipefail
+
+DRY_RUN=false
+ASSUME_YES=false
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help)
+      sed -n '2,15p' "$0" | sed 's/^# \?//'
+      exit 0
+      ;;
+    --dry-run) DRY_RUN=true ;;
+    --yes|-y)  ASSUME_YES=true ;;
+    *) printf "unknown flag: %s\n" "$arg" >&2; exit 2 ;;
+  esac
+done
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 USER_HOME=$HOME
@@ -32,29 +52,58 @@ warn() { printf "%s %s\n" "$(c_yellow '!!')" "$*" >&2; }
 die()  { printf "%s %s\n" "$(c_red 'XX')" "$*" >&2; exit 1; }
 
 # --- prereqs ---
-check_cmd() { command -v "$1" >/dev/null 2>&1 || die "missing: $1 (try: brew install $1)"; }
-check_cmd ttyd
-check_cmd tmux
-check_cmd go
-check_cmd launchctl
 [[ "$(uname -s)" == "Darwin" ]] || die "this kit is macOS-only (uses launchd)"
 
-# Caddy is required in v2 (it terminates TLS and routes by path). If missing,
-# stop early with a clear message — we still generate everything else.
-HAS_CADDY=true
-command -v caddy >/dev/null 2>&1 || HAS_CADDY=false
+# All hard requirements. Each maps to a brew package (or "system" if it ships
+# with macOS). The script collects ALL missing prereqs before exiting so the
+# user can fix everything in one go instead of one-error-at-a-time.
+declare -a MISSING=()
+require() {
+  local cmd=$1 hint=$2
+  command -v "$cmd" >/dev/null 2>&1 || MISSING+=("$cmd: $hint")
+}
+require ttyd     "brew install ttyd"
+require tmux     "brew install tmux"
+require go       "brew install go"
+require caddy    "brew install caddy"
+require python3  "comes with Xcode CLT — try: xcode-select --install"
+require launchctl "(should ship with macOS — something is very wrong)"
+require plutil    "(should ship with macOS — something is very wrong)"
+
+if (( ${#MISSING[@]} > 0 )); then
+  c_red "Missing prerequisites:"; echo
+  for m in "${MISSING[@]}"; do printf "  - %s\n" "$m"; done
+  echo
+  die "install the listed tools and re-run ./install.sh"
+fi
 
 # --- discover or prompt ---
 default_host=""
 default_ip=""
 if command -v tailscale >/dev/null; then
-  default_host=$(tailscale status --self --json 2>/dev/null | grep -oE '"DNSName":"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/\.$//') || true
+  # Parse DNSName via python3 (newer tailscale's JSON includes whitespace after
+  # the colon, which broke the previous grep -oE regex). Trailing dot stripped.
+  default_host=$(tailscale status --self --json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    n = d.get("Self", {}).get("DNSName", "")
+    print(n.rstrip("."))
+except Exception:
+    pass
+' 2>/dev/null) || true
   default_ip=$(tailscale ip -4 2>/dev/null | head -1) || true
 fi
 
 prompt() {
   local var=$1 label=$2 default=$3 val
   if [[ -n "${!var:-}" ]]; then
+    return
+  fi
+  # --yes accepts whatever default is offered; no default means we still must
+  # prompt (no sane fallback) — honor that and let the user see the question.
+  if $ASSUME_YES && [[ -n "$default" ]]; then
+    printf -v "$var" '%s' "$default"
     return
   fi
   if [[ -n "$default" ]]; then
@@ -81,7 +130,9 @@ KEY_PATH="$HOME/.tailscale-certs/$TAILNET_HOST.key"
 
 if [[ ! -f "$CERT_PATH" || ! -f "$KEY_PATH" ]]; then
   warn "TLS cert not found at $CERT_PATH"
-  if command -v tailscale >/dev/null; then
+  if $DRY_RUN; then
+    warn "dry-run: skipping cert acquisition; you'll need a cert before running for real"
+  elif command -v tailscale >/dev/null; then
     read -rp "Run 'tailscale cert $TAILNET_HOST' now? [y/N]: " yn
     if [[ "$yn" =~ ^[Yy] ]]; then
       mkdir -p "$HOME/.tailscale-certs"
@@ -122,14 +173,18 @@ fi
 # re-runs install.sh. The dashboard reads this file at runtime; install.sh
 # reads it to generate Caddy reverse_proxy blocks for any service with proxy_to.
 if [[ ! -f "$SERVICES_FILE" ]]; then
-  mkdir -p "$SERVICES_DIR"
-  cat > "$SERVICES_FILE" <<'EOF'
+  if $DRY_RUN; then
+    say "would create empty services file at $SERVICES_FILE"
+  else
+    mkdir -p "$SERVICES_DIR"
+    cat > "$SERVICES_FILE" <<'EOF'
 {
   "$schema": "see services.example.json in the webterm-kit repo for the schema",
   "services": []
 }
 EOF
-  say "created empty services file at $SERVICES_FILE"
+    say "created empty services file at $SERVICES_FILE"
+  fi
 fi
 
 # --- show what we'll do ---
@@ -149,12 +204,19 @@ else
   warn "no playbooks found in $PLAYBOOKS_DIR (each subdir needs a CLAUDE.md)"
 fi
 
-if ! $HAS_CADDY; then
-  warn "caddy not found — Caddyfile will still be generated, but install it (brew install caddy) before serving"
+if $DRY_RUN; then
+  warn "dry-run mode: no files will be written and no services will be touched"
 fi
 
-read -rp "Proceed? [Y/n]: " yn
-[[ "$yn" =~ ^[Nn] ]] && exit 0
+if ! $ASSUME_YES; then
+  read -rp "Proceed? [Y/n]: " yn
+  [[ "$yn" =~ ^[Nn] ]] && exit 0
+fi
+
+if $DRY_RUN; then
+  say "dry-run complete. Re-run without --dry-run to apply."
+  exit 0
+fi
 
 # --- build binaries ---
 say "building chooser binary"
@@ -334,12 +396,10 @@ sed -e "/__PLAYBOOK_ROUTES__/r $routes_tmp" -e "/__PLAYBOOK_ROUTES__/d" "$ROOT/t
   > "$CADDYFILE_PATH"
 rm -f "$routes_tmp"
 
-if $HAS_CADDY; then
-  if caddy validate --config "$CADDYFILE_PATH" >/dev/null 2>&1; then
-    say "Caddyfile validates"
-  else
-    warn "Caddyfile failed caddy validate — see: caddy validate --config $CADDYFILE_PATH"
-  fi
+if caddy validate --config "$CADDYFILE_PATH" >/dev/null 2>&1; then
+  say "Caddyfile validates"
+else
+  warn "Caddyfile failed caddy validate — see: caddy validate --config $CADDYFILE_PATH"
 fi
 
 # --- caddy launchd helper (system daemon, needs sudo to install) ---
@@ -393,31 +453,65 @@ cat > "$profile_file" <<EOF
 EOF
 say "wrote machine profile to $profile_file"
 
+# --- caddy daemon bootstrap ---
+# Caddy needs to bind :80/:443 — that requires root, which means a system
+# LaunchDaemon under /Library/LaunchDaemons/ rather than a user LaunchAgent.
+# We offer to do it for the user (one sudo prompt, idempotent: bootout-then-
+# bootstrap). They can decline and run the printed commands themselves.
+caddy_system_plist="/Library/LaunchDaemons/$caddy_label.plist"
+caddy_running=false
+if launchctl print "system/$caddy_label" >/dev/null 2>&1; then
+  caddy_running=true
+fi
+
+echo
+if $caddy_running; then
+  say "Caddy daemon already bootstrapped — kicking it to pick up the new Caddyfile"
+  if sudo launchctl kickstart -k "system/$caddy_label" 2>/dev/null; then
+    say "Caddy reloaded"
+  else
+    warn "couldn't kick Caddy — try: sudo launchctl kickstart -k system/$caddy_label"
+  fi
+else
+  say "Caddy daemon is not yet bootstrapped (it needs sudo to bind :80/:443)"
+  bootstrap_caddy=false
+  if $ASSUME_YES; then
+    bootstrap_caddy=true
+  else
+    read -rp "Bootstrap the Caddy system daemon now? [Y/n]: " yn
+    [[ ! "$yn" =~ ^[Nn] ]] && bootstrap_caddy=true
+  fi
+  if $bootstrap_caddy; then
+    say "installing $caddy_system_plist (will prompt for sudo)"
+    if sudo cp "$caddy_plist_src" "$caddy_system_plist" \
+        && sudo chown root:wheel "$caddy_system_plist" \
+        && sudo launchctl bootstrap system "$caddy_system_plist"; then
+      say "Caddy daemon bootstrapped — :80/:443 are live"
+    else
+      warn "Caddy bootstrap failed; commands to retry by hand:"
+      printf "  sudo cp '%s' '%s'\n" "$caddy_plist_src" "$caddy_system_plist"
+      printf "  sudo chown root:wheel '%s'\n" "$caddy_system_plist"
+      printf "  sudo launchctl bootstrap system '%s'\n" "$caddy_system_plist"
+    fi
+  else
+    say "to bootstrap Caddy later, run:"
+    printf "  sudo cp '%s' '%s'\n" "$caddy_plist_src" "$caddy_system_plist"
+    printf "  sudo chown root:wheel '%s'\n" "$caddy_system_plist"
+    printf "  sudo launchctl bootstrap system '%s'\n" "$caddy_system_plist"
+  fi
+fi
+
 # --- summary ---
 echo
-say "user-level services bootstrapped. Caddy still needs to start."
-echo
-printf "Install Caddy (one-time, if not already):\n"
-printf "  brew install caddy\n\n"
-printf "Bootstrap Caddy as a system daemon (needs sudo, binds :80/:443):\n"
-printf "  sudo cp '%s' /Library/LaunchDaemons/%s.plist\n" "$caddy_plist_src" "$caddy_label"
-printf "  sudo chown root:wheel /Library/LaunchDaemons/%s.plist\n" "$caddy_label"
-printf "  sudo launchctl bootstrap system /Library/LaunchDaemons/%s.plist\n\n" "$caddy_label"
-printf "Or run Caddy in the foreground for testing (--watch auto-reloads on Caddyfile changes):\n"
-printf "  sudo caddy run --config '%s' --watch\n\n" "$CADDYFILE_PATH"
-printf "Once Caddy is up:\n"
-printf "  https://%s/                       dashboard (everything)\n"                "$TAILNET_HOST"
-printf "  https://%s/chooser/               TUI picker (sessions + playbooks)\n"     "$TAILNET_HOST"
-printf "  https://%s/tmux/                  alias for /chooser/\n"                   "$TAILNET_HOST"
-printf "  https://%s/tmux/<name>/           attach-or-create tmux session <name>\n"  "$TAILNET_HOST"
-printf "  https://%s/playbook/              redirects to dashboard playbooks\n"      "$TAILNET_HOST"
+say "install complete. URLs:"
+printf "  https://%s/                  dashboard (start here)\n"                  "$TAILNET_HOST"
+printf "  https://%s/chooser/          TUI picker (sessions + playbooks)\n"       "$TAILNET_HOST"
+printf "  https://%s/tmux/<name>/      attach-or-create tmux session <name>\n"    "$TAILNET_HOST"
 for pb in "${PLAYBOOKS[@]}"; do
-  printf "  https://%s/playbook/%s/%s\n" "$TAILNET_HOST" "$pb" "$(printf '%*s' $((10 - ${#pb})) '')Claude wrapped in tmux"
+  printf "  https://%s/playbook/%s/  → playbook %s\n" "$TAILNET_HOST" "$pb" "$pb"
 done
 echo
-c_dim "manage user services: launchctl print|kickstart|kill|bootout gui/$UID_VAL/<label>"
-echo
-c_dim "logs: tail -f ~/Library/Logs/$LABEL_PREFIX.<port>.log"
-echo
-c_dim "smoke test (after Caddy is up): TAILNET_HOST=$TAILNET_HOST $ROOT/test/smoke.sh"
+c_dim "smoke test:  TAILNET_HOST=$TAILNET_HOST $ROOT/test/smoke.sh"; echo
+c_dim "user logs:   tail -f ~/Library/Logs/$LABEL_PREFIX.<port>.log"; echo
+c_dim "manage:      launchctl {print|kickstart|kill|bootout} gui/$UID_VAL/<label>"; echo
 echo
