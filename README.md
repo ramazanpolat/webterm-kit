@@ -53,7 +53,35 @@ process**, and it terminates TLS with the cert your Tailnet already gives you.
 `./install.sh` checks every one of these and exits with the right `brew install`
 hint if anything is missing.
 
-## Install
+## Two ways to run it
+
+| | when |
+|---|---|
+| `./run.sh` | **portable / dev mode**. Foreground, Ctrl-C stops it. No sudo, no launchd, no system changes. Defaults to HTTP on `localhost:8080`. |
+| `./install.sh` | **installed mode**. launchd-managed, survives reboots, Caddy on `:443` over HTTPS. Needs sudo once for the Caddy daemon. |
+
+Both use the same backends and ports (`8020`/`8021`/`8030+`), so they can't run
+side by side — pick one. `./uninstall.sh` reverses installed mode; `Ctrl-C`
+reverses portable mode.
+
+### Portable mode
+
+```bash
+git clone https://github.com/ramazanpolat/webterm-kit.git
+cd webterm-kit
+./run.sh                            # HTTP on localhost:8080
+./run.sh --tls                      # HTTPS on :8443 (needs Tailscale cert)
+./run.sh --port 9000 --host my.lan  # any host/port you want
+```
+
+`./run.sh` builds the binaries, renders a dev Caddyfile, starts every backend
+in the background, and runs Caddy in the foreground. Ctrl-C kills everything.
+Logs land in `./logs/<service>.log`.
+
+If a port is already in use (e.g. installed services are running), `run.sh`
+refuses to start with a clear message. Run `./uninstall.sh` first.
+
+### Installed mode
 
 ```bash
 git clone https://github.com/ramazanpolat/webterm-kit.git
@@ -171,7 +199,8 @@ confirm a fresh install actually works end-to-end.
 
 | | |
 |---|---|
-| `install.sh` | the entry point — does everything |
+| `run.sh` | portable: foreground process tree, Ctrl-C to stop |
+| `install.sh` | installed: launchd services + system Caddy daemon |
 | `uninstall.sh` | reverses `install.sh` |
 | `chooser/main.go` | Bubble Tea TUI session picker |
 | `dashboard/main.go` | Go HTTP service (no toolchain) |

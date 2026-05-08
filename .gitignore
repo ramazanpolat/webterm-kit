@@ -1,4 +1,5 @@
 generated/
+logs/
 chooser/chooser
 dashboard/dashboard
 test/browser/node_modules/
