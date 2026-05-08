@@ -39,10 +39,12 @@ GENERATED_DIR="$ROOT/generated"
 LOG_DIR="$ROOT/logs"
 CADDYFILE="$GENERATED_DIR/Caddyfile.dev"
 
-CHOOSER_PORT=8020
-DASHBOARD_PORT=8021
-PLAYBOOK_PORT_BASE=8030
-ADMIN_PORT=2020   # Caddy admin (different from installed Caddy's :2019)
+# Backend ports (env-overridable for testing or when a wedged macOS launchd
+# socket holds the default port — `lsof` won't show it but `netstat` does).
+CHOOSER_PORT="${CHOOSER_PORT:-8020}"
+DASHBOARD_PORT="${DASHBOARD_PORT:-8021}"
+PLAYBOOK_PORT_BASE="${PLAYBOOK_PORT_BASE:-8030}"
+ADMIN_PORT="${ADMIN_PORT:-2020}"   # Caddy admin (different from installed Caddy's :2019)
 
 c_red()    { printf "\033[31m%s\033[0m" "$1"; }
 c_green()  { printf "\033[32m%s\033[0m" "$1"; }
@@ -91,8 +93,13 @@ fi
 # enumerate them.
 check_port() {
   local p=$1 what=$2
-  if lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then
-    die "port $p is in use ($what). If launchd services are running, ./uninstall.sh first."
+  # Two checks because they catch different states:
+  #  - lsof finds a process bound to the port
+  #  - netstat sees LISTEN even when the socket is held by launchd:1 (a
+  #    phantom-socket state that survives bootout on macOS until reboot)
+  if lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1 \
+      || netstat -an 2>/dev/null | grep -qE "\.${p}[[:space:]]+.*LISTEN"; then
+    die "port $p is in use ($what). If launchd services are running, ./uninstall.sh first; if a socket is wedged, reboot."
   fi
 }
 check_port "$CHOOSER_PORT"   chooser
@@ -252,7 +259,12 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 start_bg() {
-  local name=$1 logfile="$LOG_DIR/$name.log"
+  # Two separate `local` statements: when both are on one line, $name in the
+  # second assignment expands using the OUTER scope (bash binds local names
+  # left-to-right but expands all values up front), so $logfile would reuse
+  # whatever `name` was set to before start_bg was called.
+  local name=$1
+  local logfile="$LOG_DIR/$name.log"
   shift
   "$@" >"$logfile" 2>&1 &
   local pid=$!
@@ -291,8 +303,35 @@ start_bg "dashboard:$DASHBOARD_PORT" \
   --services-file="$SERVICES_FILE" \
   --caddyfile="$CADDYFILE"
 
-# Give backends a moment to bind before Caddy tries to proxy.
-sleep 0.5
+# Wait up to ~3s for every backend to actually bind — a process can fork off
+# successfully but exit immediately with "address already in use" if a wedged
+# socket beat us to the port. Without this the whole tree boots, Caddy reports
+# success, and the user only finds out via 502 errors.
+wait_for_listen() {
+  local port=$1 deadline=$((SECONDS + 3))
+  while (( SECONDS < deadline )); do
+    if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+declare -a UNBOUND=()
+wait_for_listen "$CHOOSER_PORT"   || UNBOUND+=("chooser:$CHOOSER_PORT")
+wait_for_listen "$DASHBOARD_PORT" || UNBOUND+=("dashboard:$DASHBOARD_PORT")
+i=0
+for pb in "${PLAYBOOKS[@]}"; do
+  port=$((PLAYBOOK_PORT_BASE + i))
+  i=$((i+1))
+  wait_for_listen "$port" || UNBOUND+=("playbook:$pb:$port")
+done
+
+if (( ${#UNBOUND[@]} > 0 )); then
+  warn "backends failed to bind: ${UNBOUND[*]}"
+  warn "see logs in $LOG_DIR/ for the bind error. Caddy will return 502 for these routes."
+fi
 
 echo
 say "ready: ${SCHEME}://${HOST}:${FRONT_PORT}/"
