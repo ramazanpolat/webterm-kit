@@ -454,7 +454,8 @@ Setup: `./run.sh` (after the `local name=…` fix) on `localhost:8080`,
 | L7 zero console errors    | ✓ | CDP Console + Log domains drained across all 5 tabs, 0 errors / 0 warnings |
 | T1 monospace + 20px       | ✓ | `.xterm-rows` computed style: `Menlo, "JetBrains Mono", "SF Mono", Monaco, "Apple Color Emoji", "Apple Symbols", "Hiragino Sans", Symbola, monospace` @ 20px; DOM renderer (no canvas); `T1-chooser-fresh.png` |
 | T2 Unicode + box-drawing  | ✓ | `printf "— ─ │ ┌─┐ │ │ └─┘ ⏺ ✻ ※ @user — done"` echoes the same chars; `T1-T2-terminal-unicode.png` |
-| T3 `@` symbol             | ✓ | both `type_text('@')` and `press_key('@')` produce `@` in the shell |
+| T3 `@` symbol             | ✓ harness + ✓ user manual on Turkish-Q (Option+Q) | both `type_text('@')` and `press_key('@')` produce `@`; user-confirmed Turkish-Q layout works after B7 fix |
+| T11 wheel scrolls         | ✗ user manual — accepted as non-blocking | wheel navigates command history. Root cause B8 (tmux mouse off). Fix is in user's `~/.tmux.conf`. Not webterm-kit's bug. |
 | T7 macOptionIsMeta config | ✓ | xterm `_core.options.macOptionIsMeta == true` |
 | T11 scrollback            | ✓ | `_core.options.scrollback == 10000`; mouse wheel scrolls terminal not page; `T11-scrollback.png` |
 | T15 dark theme            | ✓ | terminal bg near-black; xterm-rows color `rgb(210, 210, 210)` on dark |
