@@ -1,8 +1,8 @@
 # CODEWIKI
 
 Code-level reference. Where things live, what they do, how to find what
-you need. Snapshot as of branch `v3-launcher` @ `026ece9`. Pairs with
-`CLAUDE.md` (which is more narrative / "why") and `PROJECT.md` (status).
+you need. Snapshot: `main` (post `v3-launcher` merge + portable `run.sh`).
+Pairs with `CLAUDE.md` (narrative / "why") and `PROJECT.md` (status).
 
 ---
 
@@ -10,12 +10,16 @@ you need. Snapshot as of branch `v3-launcher` @ `026ece9`. Pairs with
 
 ```
 webterm-kit/
-├── install.sh                 # entry point: render templates → bootstrap launchd
-├── uninstall.sh               # tear down launchd services + delete generated/
+├── run.sh                     # portable runner: foreground process tree, Ctrl-C stops
+├── install.sh                 # installed mode: render templates → bootstrap launchd
+├── uninstall.sh               # tear down launchd services + generated/, --purge for full
 ├── README.md                  # 30-second pitch
 ├── CLAUDE.md                  # narrative guide for Claude Code in this repo
-├── PROJECT.md                 # project status / roadmap / decisions
-├── CODEWIKI.md                # this file
+├── LICENSE                    # MIT
+├── docs/
+│   ├── PROJECT.md             # project status / roadmap / decisions
+│   ├── CODEWIKI.md            # this file
+│   └── DESIGN.md              # UI redesign brief
 ├── services.example.json      # schema example for ~/.webterm-kit/services.json
 │
 ├── chooser/                   # Bubble Tea TUI session picker

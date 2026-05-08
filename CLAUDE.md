@@ -4,7 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-macOS-only kit that exposes terminal sessions and Claude playbooks over a Tailnet via `ttyd` + `tmux`, fronted by **Caddy on :443** for path-based routing. Two peer session pickers — a Bubble Tea TUI and a tiny Go HTTP dashboard with a vanilla-JS SPA. There is no application server in the traditional sense — `install.sh` is the entry point and renders templates into `generated/` and `~/Library/LaunchAgents/`, which `launchd` then runs. Caddy is bootstrapped separately as a system daemon (needs sudo to bind :80/:443).
+macOS-only kit that exposes terminal sessions and Claude playbooks over a Tailnet via `ttyd` + `tmux`, fronted by Caddy for path-based routing. Two peer session pickers — a Bubble Tea TUI and a tiny Go HTTP dashboard with a vanilla-JS SPA. There is no application server in the traditional sense — templates are rendered into `generated/` and either run in the foreground (`run.sh`) or bootstrapped as launchd services (`install.sh`).
+
+**Two run modes:**
+- **`./run.sh` (portable)** — foreground process tree, Ctrl-C stops everything. HTTP on `localhost:8080` (default) or HTTPS on `:8443` (`--tls`). No sudo, no launchd, no system mutations. For development.
+- **`./install.sh` (installed)** — launchd services + Caddy as a system daemon on `:443` (TLS via Tailscale cert). Survives reboots. Needs sudo once for the Caddy daemon.
+
+Both share the same backends and ports (8020/8021/8030+) and are mutually exclusive on a single machine. `run.sh` refuses to start if the launchd services are running.
 
 **v2 architecture:** every backend (chooser, dashboard, per-playbook ttyds) binds 127.0.0.1 with plain HTTP. Caddy on :443 is the only internet-facing process. URLs are namespaced and path-routed — no port numbers in user-visible URLs:
 
@@ -21,14 +27,24 @@ macOS-only kit that exposes terminal sessions and Claude playbooks over a Tailne
 ## Common commands
 
 ```bash
-# Install / re-install (idempotent — re-run after editing install.sh, templates,
-# or after adding/removing playbooks under ~/.claude-playbooks/).
-./install.sh
+# Portable: foreground, Ctrl-C stops it. Best for dev iteration.
+./run.sh                    # HTTP on localhost:8080
+./run.sh --tls              # HTTPS on :8443 (uses Tailscale cert)
+./run.sh --port 9000        # any port you want
+./run.sh --no-build         # skip `go build` if binaries are current
+
+# Installed: idempotent launchd-managed install. Re-run after editing
+# install.sh, templates, or adding/removing playbooks.
+./install.sh                # interactive
+./install.sh --yes          # accept all defaults
+./install.sh --dry-run      # show what would happen, touch nothing
+./install.sh --help
 
 # Smoke-test a running install (curl-driven, ~5 sec, no browser deps).
 # Hits every /api/* endpoint + every Caddy route, including a POST/DELETE
 # round-trip on /api/services. Use TAILNET_HOST to override the target.
 ./test/smoke.sh
+./test/smoke.sh --host localhost:8080   # against ./run.sh
 
 # Full regression: smoke + Playwright SPA tests. Tier 2 needs Node.
 # First run downloads ~92MB of Chromium; later runs are fast (~5s).
@@ -39,8 +55,9 @@ SKIP_BROWSER=1 ./test/run-all.sh   # Tier 1 only
 # test/browser/scenarios.md
 
 # Tear down launchd services + remove generated scripts/plists.
-# Caddy daemon must be removed manually (system-level, sudo required) — see uninstall.sh output.
-./uninstall.sh
+./uninstall.sh              # leaves Caddy daemon + ~/.webterm-kit alone
+./uninstall.sh --purge      # also removes Caddy daemon (sudo) and ~/.webterm-kit
+./uninstall.sh --help
 
 # Build the Go binaries (install.sh does this automatically)
 cd chooser && go build -o chooser .

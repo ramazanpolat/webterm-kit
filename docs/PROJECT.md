@@ -2,7 +2,7 @@
 
 Snapshot of where this project is, what it's for, what it isn't, and what's
 next. Pairs with `CODEWIKI.md` (code reference) and `CLAUDE.md` (in-repo
-narrative). Snapshot date: branch `v3-launcher` @ `026ece9`.
+narrative). Snapshot: `main` (post `v3-launcher` merge + portable `run.sh`).
 
 ---
 
@@ -50,8 +50,8 @@ you've registered.**
 | Manual test scenarios doc | ✅ 11 scenarios |
 | AI-driven exploratory loop | ⏸ via screenshot review (not browser-use) |
 
-Branch `v3-launcher` is ahead of `main` by ~25 commits. Tests passing as
-of last full run. Dogfooded daily by the maintainer.
+All v2 + v3 work is now on `main`. Tests passing as of last full run.
+Dogfooded daily by the maintainer.
 
 ---
 
@@ -71,7 +71,7 @@ of last full run. Dogfooded daily by the maintainer.
   so phone disconnects don't kill the session
 - Cert via `tailscale cert`, all backends bind 127.0.0.1
 
-### v3 (`v3-launcher`, this branch)
+### v3 (current — on `main`)
 - **Tabbed launcher** — webterm | services | storage | media | discover
 - **Service registry** — `~/.webterm-kit/services.json`, dashboard reads
   + dashboard writes (POST /api/services rewrites the Caddyfile services
@@ -181,12 +181,13 @@ reading the comment in the relevant file.)
 
 ---
 
-## Repo / branch state
+## Repo state
 
 - **Origin**: https://github.com/ramazanpolat/webterm-kit
-- **Active branch**: `v3-launcher` (ahead of `main` by ~25 commits)
-- **`main` is the v1 initial commit only** — everything substantive is on `v3-launcher`
-- **PR link** (if you want to merge): https://github.com/ramazanpolat/webterm-kit/pull/new/v3-launcher
+- **Single trunk**: `main`. All v2 + v3 work merged; the `v2-playbook-integration`
+  and `v3-launcher` branches have been retired.
+- **Two ways to run**: `./run.sh` (portable foreground, no sudo) or
+  `./install.sh` (launchd-managed, sudo for Caddy daemon). Same backends.
 
 ---
 

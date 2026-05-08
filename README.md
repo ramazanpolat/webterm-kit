@@ -209,8 +209,9 @@ confirm a fresh install actually works end-to-end.
 | `test/smoke.sh` | curl-driven regression tests |
 | `test/browser/` | Playwright SPA tests (Tier 2) |
 | `CLAUDE.md` | architecture deep-dive for AI coding assistants |
-| `DESIGN.md` | the v3 UI brief |
-| `CODEWIKI.md` | code reference, generated |
+| `docs/DESIGN.md` | the v3 UI brief |
+| `docs/PROJECT.md` | project status / roadmap |
+| `docs/CODEWIKI.md` | code-level reference |
 
 ## Why not cmux / wetty / VS Code Tunnels?
 

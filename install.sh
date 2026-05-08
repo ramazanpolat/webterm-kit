@@ -259,11 +259,6 @@ render_ttyd_service() {
 # --- system ttyd services (chooser only; /tmux/ is a Caddy alias for /chooser/) ---
 render_ttyd_service "chooser" "$CHOOSER_PORT" "/chooser/" "$ROOT/chooser/chooser"
 
-# Boot out the v2.0 standalone tmux service if present — /tmux/ now redirects
-# to /chooser/, so the dedicated tmux ttyd is dead weight.
-launchctl bootout "gui/$UID_VAL/$LABEL_PREFIX.8022" 2>/dev/null || true
-rm -f "$LAUNCHD_DIR/$LABEL_PREFIX.8022.plist" "$GENERATED_DIR/ttyd-tmux.sh"
-
 # --- per-playbook ttyd services ---
 # Each playbook gets its own ttyd, its own port, its own tmux session named
 # claude-<playbook>. CLAUDE_CONFIG_DIR is exported by the wrapper script BEFORE
