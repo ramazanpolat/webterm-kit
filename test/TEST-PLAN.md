@@ -483,6 +483,30 @@ Setup: `./run.sh` (after the `local name=…` fix) on `localhost:8080`,
 - **B11** (fixed): the dashboard's `isPlainHTTP` probe (used by the discover tab to identify protocols on listening ports) sent `Host: <ip>` instead of `Host: <ip>:<port>`. When the probe hit Caddy's own admin endpoint (port 2020), Caddy's admin enforces an exact-host allow-list and returned 403, polluting the log with `host not allowed: 127.0.0.1` per probe cycle. Fix: send `Host: <addr>` where `addr` is `host:port`, the proper HTTP/1.1 form for non-default ports. The probe still works for normal HTTP servers (which accept either form) and stops triggering Caddy's allow-list rejection.
 - **B12** (fixed): `Caddyfile input is not formatted` WARN line on every boot. Cosmetic but noisy. Fix: `run.sh` now runs `caddy fmt --overwrite` on the rendered Caddyfile right after validation, before launching Caddy.
 
+### 2026-05-09 (later) — installed mode, cmux-pane driven
+
+Setup: cold cycle of `./install.sh` → `./uninstall.sh` → re-install → `./uninstall.sh --purge`. Commands run in cmux pane `surface:9`; state inspection via the parent shell. `DASHBOARD_PORT=8121` to dodge the wedged-launchd-socket on 8021. Tailnet host `macminim.tailad422.ts.net` with a real Tailscale cert.
+
+| ID | result | notes |
+|---|---|---|
+| install.sh --help | ✓ | prints flags doc and exits cleanly |
+| uninstall.sh --help | ✓ | prints flags doc and exits cleanly |
+| **N4** prereq batch detection | ✓ | `PATH=/usr/bin:/bin:/usr/sbin:/sbin ./install.sh` reports all 4 missing tools (ttyd, tmux, go, caddy) in one block, not one-at-a-time |
+| **N2** install.sh --dry-run --yes | ✓ | prints discovery + plan, exits without creating any plist, building any binary, or running launchctl. Diff before/after = empty. |
+| Cold install (--yes) | ✓ user services / ⊘ Caddy daemon (cancelled) | 4 launchd services bootstrapped (chooser:8020, playbooks:8030+8031, dashboard:8121); sudo for Caddy daemon was cancelled, install.sh handled gracefully and printed the manual commands. |
+| **N1** Idempotent re-run | ✓ | second `./install.sh --yes` → `launchctl list` count unchanged at 4; PIDs refreshed (each service `bootout`+`bootstrap`'d). |
+| **G2** run.sh refuses on collision | ✓ | exact message: `XX port 8020 is in use (chooser). If launchd services are running, ./uninstall.sh first; if a socket is wedged, reboot.` |
+| Plain ./uninstall.sh --yes | ✓ | bootouts all 4 services, removes generated/, removes machine profile. Preserves: services.json, playbooks, TLS certs. Caddy daemon plist (n/a here — wasn't installed) untouched. |
+| Re-install for --purge test | ✓ + ✓ Caddy daemon | second install with sudo entered → daemon installed at `/Library/LaunchDaemons/com.webterm.caddy.plist`, running on `:80`/`:443`. **Smoke test against `https://macminim.tailad422.ts.net/`: 26/26 passed.** |
+| **N3** uninstall.sh --purge --yes | ✓ everything | bootouts 4 user services, removes Caddy daemon (`launchctl print system/...` → "Could not find service"), removes `~/.webterm-kit/`, removes machine profile, frees all ports (80/443/8020+). Preserves: playbooks, TLS certs, logs. Used cached sudo from re-install (within macOS's 5-min window). |
+
+#### Observations
+
+- The cancel-sudo path on cold install is *defensive*: install.sh prints exact recovery commands and continues to "install complete" rather than partial-failing. That's the behavior the dry-run-then-real-run flow expects.
+- macOS sudo creds caching means a re-run of `--purge` immediately after `install.sh --yes` doesn't re-prompt. Convenient for scripted teardown, but not relied on by the script.
+- Stale `~/Library/Logs/com.webterm.8022.log` lingers from the v2.0-era standalone tmux ttyd (removed in v2.1). Logs are intentionally never auto-deleted by uninstall, so this is expected. Can be removed manually.
+- 26/26 smoke is the proof that the *whole* installed-mode pipeline (launchd → ttyds → Caddy with TLS via Tailscale cert → admin-API reload of services block) works end-to-end on the user's actual tailnet host.
+
 #### Expected (not bugs)
 
 - `WARN  http    HTTP/2 skipped because it requires TLS` (and `HTTP/3` likewise) — informational. In `./run.sh` HTTP-only mode there's no TLS, so HTTP/2 and HTTP/3 can't run. Plain HTTP/1.1 works fine. The warnings don't appear in `--tls` mode.
