@@ -235,6 +235,12 @@ EOF
 caddy validate --config "$CADDYFILE" >/dev/null 2>&1 \
   || die "rendered Caddyfile failed validation: caddy validate --config $CADDYFILE"
 
+# Pre-format so Caddy doesn't log "Caddyfile input is not formatted; run
+# 'caddy fmt --overwrite' to fix inconsistencies" on every start. The heredoc
+# above mixes spaces and tabs deliberately (heredocs strip leading tabs only
+# for `<<-`), so just let caddy fmt normalize it.
+caddy fmt --overwrite "$CADDYFILE" >/dev/null 2>&1 || true
+
 # --- ttyd flags (mirrors templates/ttyd.sh.tmpl) ---
 TTYD_FLAGS=(
   -i 127.0.0.1 -W -a
@@ -361,7 +367,15 @@ echo
 # NOTE: NOT `exec` — exec would replace the shell with Caddy, which means the
 # EXIT trap never fires and all the backgrounded ttyds + dashboard survive
 # Ctrl-C as orphans. Run Caddy as a child, wait on it, let the trap clean up.
-caddy run --config "$CADDYFILE" --adapter caddyfile &
+# Redirect Caddy's per-instance state (autosave.json, instance.uuid, locks/)
+# into ./generated/caddy/ so portable mode stays self-contained. Without this
+# Caddy writes to $XDG_DATA_HOME/caddy (which on macOS is
+# ~/Library/Application Support/Caddy) — that path is often root-owned from
+# a previous installed-mode run and produces three permission-denied lines on
+# every boot. ./uninstall.sh removes ./generated, so this cleans up too.
+mkdir -p "$GENERATED_DIR/caddy"
+XDG_DATA_HOME="$GENERATED_DIR" XDG_CONFIG_HOME="$GENERATED_DIR" \
+  caddy run --config "$CADDYFILE" --adapter caddyfile &
 CADDY_PID=$!
 PIDS+=("$CADDY_PID")
 wait "$CADDY_PID"

@@ -148,7 +148,13 @@ func isPlainHTTP(addr, host string) bool {
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(probeTimeout * 3))
-	req := fmt.Sprintf("GET / HTTP/1.0\r\nHost: %s\r\nUser-Agent: webterm-kit-probe/1\r\nConnection: close\r\n\r\n", host)
+	// Use addr (host:port) for the Host header, not bare host. Some servers —
+	// notably Caddy's admin endpoint — reject requests whose Host doesn't match
+	// the configured listener exactly, and a probe with `Host: 127.0.0.1`
+	// against `localhost:2020` returns 403 (and pollutes Caddy's log) instead
+	// of the HTTP/1.x reply we wanted.
+	req := fmt.Sprintf("GET / HTTP/1.0\r\nHost: %s\r\nUser-Agent: webterm-kit-probe/1\r\nConnection: close\r\n\r\n", addr)
+	_ = host // kept in signature for callers; semantics now derived from addr
 	if _, err := conn.Write([]byte(req)); err != nil {
 		return false
 	}
