@@ -177,20 +177,42 @@ Setting it persistently: `export MAC_OPTION_IS_META=true` in your shell rc.
 
 ## Manage services
 
-`launchctl` is to launchd what `systemctl` is to systemd. User services are
-labeled `com.webterm.<port>` (e.g. `com.webterm.8020` is the chooser):
+After `./install.sh`, services start immediately *and* survive reboots
+(launchd plists carry `RunAtLoad=true` + `KeepAlive=true`). You don't need
+to start them manually — but you may want to stop, restart, or disable
+them without uninstalling. Use `./service.sh`:
 
-| systemd | launchd |
-|---|---|
-| `systemctl start foo`    | `launchctl kickstart gui/$UID/foo`     |
-| `systemctl restart foo`  | `launchctl kickstart -k gui/$UID/foo`  |
-| `systemctl stop foo`     | `launchctl kill SIGTERM gui/$UID/foo`  |
-| `systemctl status foo`   | `launchctl print gui/$UID/foo`         |
-| `systemctl disable foo`  | `launchctl bootout gui/$UID/foo`       |
-| `journalctl -u foo`      | `tail -f ~/Library/Logs/foo.log`       |
+```bash
+./service.sh status     # which services are running, which are disabled
+./service.sh stop       # stop now; comes back on next login
+./service.sh start      # start them now
+./service.sh restart    # kickstart -k each (force restart)
+./service.sh disable    # stop now AND don't start on reboot — like `systemctl disable`
+./service.sh enable     # re-enable + start
+```
 
-Caddy is a **system** daemon (it binds privileged ports), so substitute
-`system/com.webterm.caddy` and prepend `sudo`.
+Add `--include-caddy` to also act on the system Caddy daemon (sudo prompted).
+Use `--label com.webterm.8020` to target a single service.
+
+Direct `launchctl` cheatsheet for the curious:
+
+| systemd | launchd | `service.sh` |
+|---|---|---|
+| `systemctl start foo`   | `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/foo.plist` | `./service.sh start` |
+| `systemctl restart foo` | `launchctl kickstart -k gui/$UID/foo`  | `./service.sh restart` |
+| `systemctl stop foo`    | `launchctl bootout gui/$UID/foo`       | `./service.sh stop` |
+| `systemctl status foo`  | `launchctl print gui/$UID/foo`         | `./service.sh status` |
+| `systemctl disable foo` | `launchctl disable gui/$UID/foo` + bootout | `./service.sh disable` |
+| `systemctl enable foo`  | `launchctl enable gui/$UID/foo` + bootstrap | `./service.sh enable` |
+| `journalctl -u foo`     | `tail -f ~/Library/Logs/foo.log`       | — |
+
+> Note: `launchctl kill SIGTERM` doesn't actually stop a service whose plist
+> has `KeepAlive=true` (yours do) — launchd just respawns it. Use `bootout`
+> (or `./service.sh stop`).
+
+Caddy is a **system** daemon (it binds privileged ports), so its label
+domain is `system/com.webterm.caddy` and every command needs `sudo`. Pass
+`--include-caddy` to `service.sh` to handle it too.
 
 Override the prefix with `LABEL_PREFIX=org.example ./install.sh`.
 
@@ -249,6 +271,7 @@ runs and bugs found.
 | `run.sh` | portable: backgrounded supervisor (or `-it` for foreground) |
 | `stop.sh` | stop the backgrounded `run.sh` supervisor |
 | `install.sh` | installed: launchd services + system Caddy daemon |
+| `service.sh` | manage installed services (start / stop / disable / enable) |
 | `uninstall.sh` | reverses `install.sh` |
 | `chooser/main.go` | Bubble Tea TUI session picker |
 | `dashboard/main.go` | Go HTTP service (no toolchain) |

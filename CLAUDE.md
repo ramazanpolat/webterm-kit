@@ -80,18 +80,21 @@ The installer reads from env or prompts: `TAILNET_HOST`, `BIND_IP`, `LABEL_PREFI
 
 ## launchd service management
 
-User services are labeled `<LABEL_PREFIX>.<port>` (e.g. `com.webterm.8020`). `systemctl`-style cheatsheet:
+User services are labeled `<LABEL_PREFIX>.<port>` (e.g. `com.webterm.8020`). Prefer the wrapper `./service.sh start|stop|restart|disable|enable|status` — it handles the right verb (bootstrap vs kickstart, bootout vs disable+bootout) for you. Direct `launchctl` for reference:
 
-| action | command |
-|---|---|
-| start | `launchctl kickstart gui/$UID/<label>` |
-| restart | `launchctl kickstart -k gui/$UID/<label>` |
-| stop | `launchctl kill SIGTERM gui/$UID/<label>` |
-| status | `launchctl print gui/$UID/<label>` |
-| disable | `launchctl bootout gui/$UID/<label>` |
-| logs | `tail -f ~/Library/Logs/<label>.log` |
+| action | command | `service.sh` |
+|---|---|---|
+| start | `launchctl bootstrap gui/$UID ~/Library/LaunchAgents/<label>.plist` | `./service.sh start` |
+| restart | `launchctl kickstart -k gui/$UID/<label>` | `./service.sh restart` |
+| stop (returns on reboot) | `launchctl bootout gui/$UID/<label>` | `./service.sh stop` |
+| disable (no reboot start) | `launchctl disable gui/$UID/<label>` then bootout | `./service.sh disable` |
+| enable | `launchctl enable gui/$UID/<label>` then bootstrap | `./service.sh enable` |
+| status | `launchctl print gui/$UID/<label>` | `./service.sh status` |
+| logs | `tail -f ~/Library/Logs/<label>.log` | — |
 
-Caddy is a **system** daemon, not user — substitute `system/<label>` (no UID) and prepend `sudo`.
+Note: `launchctl kill SIGTERM` doesn't actually stop a `KeepAlive=true` service (every plist here is) — launchd respawns it within `ThrottleInterval`. Use `bootout` instead.
+
+Caddy is a **system** daemon, not user — substitute `system/<label>` (no UID) and prepend `sudo`. `./service.sh --include-caddy <verb>` does this.
 
 ## Architecture
 
