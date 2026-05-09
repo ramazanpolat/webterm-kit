@@ -95,25 +95,56 @@ else
   SCHEME=http
 fi
 
-# --- port collision check ---
-# `lsof -i:<port>` exits 0 if anything's listening. We check chooser/dashboard,
-# the front door, and the admin port. Playbook ports are checked lazily as we
-# enumerate them.
-check_port() {
-  local p=$1 what=$2
-  # Two checks because they catch different states:
-  #  - lsof finds a process bound to the port
-  #  - netstat sees LISTEN even when the socket is held by launchd:1 (a
-  #    phantom-socket state that survives bootout on macOS until reboot)
-  if lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1 \
-      || netstat -an 2>/dev/null | grep -qE "\.${p}[[:space:]]+.*LISTEN"; then
-    die "port $p is in use ($what). If launchd services are running, ./uninstall.sh first; if a socket is wedged, reboot."
-  fi
+# --- port helpers ---
+# Backend ports (chooser/dashboard/playbooks) auto-shift if their preferred
+# port is taken, since Caddy is the front door and end users only see the
+# host URL. The Caddy front door + admin ports DO die on collision — they're
+# user-specified and shifting them silently would change the URL.
+port_in_use() {
+  local p=$1
+  lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1 && return 0
+  # Capture netstat output, then grep — avoids the `set -o pipefail` +
+  # `grep -q` trap where grep matches early, closes its stdin, netstat dies
+  # of SIGPIPE (exit 141), pipefail surfaces 141 instead of grep's 0, and
+  # the `&& return 0` never fires.
+  local ns
+  ns=$(netstat -an 2>/dev/null) || true
+  printf '%s\n' "$ns" | grep -qE "\.${p}[[:space:]]+.*LISTEN" && return 0
+  return 1
 }
-check_port "$CHOOSER_PORT"   chooser
-check_port "$DASHBOARD_PORT" dashboard
-check_port "$FRONT_PORT"     "Caddy front door"
-check_port "$ADMIN_PORT"     "Caddy admin"
+USED_PORTS=" "
+add_port()    { USED_PORTS="$USED_PORTS$1 "; }
+already_used(){ [[ "$USED_PORTS" == *" $1 "* ]]; }
+pick_port() {
+  # Separate `local` lines: `local a=X b=$((a+1))` evaluates `a` from the
+  # OUTER scope on bash 3.2, the same way `start_bg`'s log path bit us.
+  local start=$1
+  local p=$1
+  local max=$((start + 100))
+  while (( p < max )); do
+    if ! already_used "$p" && ! port_in_use "$p"; then echo "$p"; return 0; fi
+    p=$((p + 1))
+  done
+  return 1
+}
+
+# --- pick free chooser/dashboard ports ---
+CHOOSER_PORT_DEFAULT="$CHOOSER_PORT"
+DASHBOARD_PORT_DEFAULT="$DASHBOARD_PORT"
+CHOOSER_PORT=$(pick_port "$CHOOSER_PORT")     || die "no free port near $CHOOSER_PORT_DEFAULT"
+add_port "$CHOOSER_PORT"
+DASHBOARD_PORT=$(pick_port "$DASHBOARD_PORT") || die "no free port near $DASHBOARD_PORT_DEFAULT"
+add_port "$DASHBOARD_PORT"
+[[ "$CHOOSER_PORT"   != "$CHOOSER_PORT_DEFAULT"   ]] && warn "chooser port shifted: $CHOOSER_PORT_DEFAULT → $CHOOSER_PORT"
+[[ "$DASHBOARD_PORT" != "$DASHBOARD_PORT_DEFAULT" ]] && warn "dashboard port shifted: $DASHBOARD_PORT_DEFAULT → $DASHBOARD_PORT"
+
+# --- the front door + admin still hard-fail (user-specified) ---
+for pair in "$FRONT_PORT:Caddy front door" "$ADMIN_PORT:Caddy admin"; do
+  p="${pair%%:*}"; what="${pair#*:}"
+  if port_in_use "$p"; then
+    die "port $p is in use ($what). Pass --port N to use a different one; if launchd services are running, ./uninstall.sh first; if a socket is wedged, reboot."
+  fi
+done
 
 # --- discover playbooks ---
 PLAYBOOKS_DIR="${PLAYBOOKS_DIR:-$HOME/.claude-playbooks}"
@@ -127,10 +158,13 @@ if [[ -d "$PLAYBOOKS_DIR" ]]; then
     PLAYBOOKS+=("$name")
   done
 fi
-i=0
+
+# --- pick a free port per playbook ---
+declare -a PLAYBOOK_PORTS=()
 for pb in "${PLAYBOOKS[@]}"; do
-  check_port $((PLAYBOOK_PORT_BASE + i)) "playbook $pb"
-  i=$((i+1))
+  pp=$(pick_port "$PLAYBOOK_PORT_BASE") || die "no free port near $PLAYBOOK_PORT_BASE for playbook $pb"
+  PLAYBOOK_PORTS+=("$pp")
+  add_port "$pp"
 done
 
 # --- seed services.json if missing (matches install.sh) ---
@@ -159,7 +193,7 @@ fi
 playbook_routes=""
 i=0
 for pb in "${PLAYBOOKS[@]}"; do
-  port=$((PLAYBOOK_PORT_BASE + i))
+  port="${PLAYBOOK_PORTS[$i]}"
   i=$((i+1))
   playbook_routes+="	# Playbook: $pb"$'\n'
   playbook_routes+="	handle /playbook/$pb/* {"$'\n'
@@ -323,7 +357,7 @@ supervise() {
 
   local i=0 pb pb_dir pb_wrapper port
   for pb in "${PLAYBOOKS[@]}"; do
-    port=$((PLAYBOOK_PORT_BASE + i))
+    port="${PLAYBOOK_PORTS[$i]}"
     i=$((i+1))
     pb_dir="$PLAYBOOKS_DIR/$pb"
     pb_wrapper="$GENERATED_DIR/claude-$pb.sh"
@@ -353,7 +387,7 @@ EOF
   wait_for_listen "$DASHBOARD_PORT" || UNBOUND+=("dashboard:$DASHBOARD_PORT")
   i=0
   for pb in "${PLAYBOOKS[@]}"; do
-    port=$((PLAYBOOK_PORT_BASE + i))
+    port="${PLAYBOOK_PORTS[$i]}"
     i=$((i+1))
     wait_for_listen "$port" || UNBOUND+=("playbook:$pb:$port")
   done

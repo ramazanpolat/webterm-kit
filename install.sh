@@ -146,13 +146,58 @@ if [[ ! -f "$CERT_PATH" || ! -f "$KEY_PATH" ]]; then
 fi
 
 # --- ports ---
-# Fixed system services keep their ports for backward compat. Playbooks get
-# 8030+. None of these are user-facing — Caddy on :443 is the only public port.
-# (The standalone tmux ttyd from v2.0 was dropped in v2.1: /tmux/ now redirects
-# to the chooser, which can pick or create any session.)
-CHOOSER_PORT=8020
-DASHBOARD_PORT="${DASHBOARD_PORT:-8021}"
-PLAYBOOK_PORT_BASE=8030
+# These are starting points. Each is auto-shifted to the next free port if the
+# preferred one is taken, since Caddy is the front door and the user reaches
+# everything via https://<host>/ — backend port numbers are an internal detail.
+CHOOSER_PORT_DEFAULT="${CHOOSER_PORT:-8020}"
+DASHBOARD_PORT_DEFAULT="${DASHBOARD_PORT:-8021}"
+PLAYBOOK_PORT_BASE="${PLAYBOOK_PORT_BASE:-8030}"
+
+# port_in_use: belt-and-suspenders. lsof catches normal listeners; netstat
+# catches the macOS phantom-launchd-socket state (where launchd:1 holds a
+# port but lsof can't see it — survives bootout, only a reboot clears it).
+# Capture netstat to a var first: with `set -o pipefail`, `... | grep -q`
+# matching early closes grep's stdin, netstat dies of SIGPIPE (exit 141), and
+# the pipeline reports 141 instead of 0 — `&& return 0` never fires.
+port_in_use() {
+  local p=$1
+  lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1 && return 0
+  local ns
+  ns=$(netstat -an 2>/dev/null) || true
+  printf '%s\n' "$ns" | grep -qE "\.${p}[[:space:]]+.*LISTEN" && return 0
+  return 1
+}
+
+# Track ports we've claimed for THIS run so two services don't pick the same
+# free port. Space-padded so a literal `*" $p "*` glob check works.
+USED_PORTS=" "
+add_port()    { USED_PORTS="$USED_PORTS$1 "; }
+already_used(){ [[ "$USED_PORTS" == *" $1 "* ]]; }
+
+# pick_port START → first free port >= START (within START..START+99). Skips
+# ports already claimed in this run AND ports the OS reports as in-use.
+# Separate `local` lines: `local a=X b=$((a+1))` evaluates `a` from the OUTER
+# scope on bash 3.2.
+pick_port() {
+  local start=$1
+  local p=$start
+  local max=$((start + 100))
+  while (( p < max )); do
+    if ! already_used "$p" && ! port_in_use "$p"; then
+      echo "$p"
+      return 0
+    fi
+    p=$((p + 1))
+  done
+  return 1
+}
+
+CHOOSER_PORT=$(pick_port "$CHOOSER_PORT_DEFAULT")     || die "no free port near $CHOOSER_PORT_DEFAULT"
+add_port "$CHOOSER_PORT"
+DASHBOARD_PORT=$(pick_port "$DASHBOARD_PORT_DEFAULT") || die "no free port near $DASHBOARD_PORT_DEFAULT"
+add_port "$DASHBOARD_PORT"
+[[ "$CHOOSER_PORT"   != "$CHOOSER_PORT_DEFAULT"   ]] && warn "chooser port shifted: $CHOOSER_PORT_DEFAULT → $CHOOSER_PORT (preferred port in use)"
+[[ "$DASHBOARD_PORT" != "$DASHBOARD_PORT_DEFAULT" ]] && warn "dashboard port shifted: $DASHBOARD_PORT_DEFAULT → $DASHBOARD_PORT (preferred port in use)"
 
 # macOptionIsMeta: when true, xterm.js converts Option+letter into Meta sequences
 # (Readline shortcuts like Option+B / Option+F). Great for US keyboards, but on
@@ -176,6 +221,17 @@ if [[ -d "$PLAYBOOKS_DIR" ]]; then
     PLAYBOOKS+=("$name")
   done
 fi
+
+# --- assign per-playbook ports (auto-shifting around in-use ones) ---
+# Each playbook gets the next free port at-or-after PLAYBOOK_PORT_BASE.
+# pick_port skips ports already in USED_PORTS, so they come out monotonically
+# increasing in the natural case, and gracefully hop over taken ports otherwise.
+declare -a PLAYBOOK_PORTS=()
+for pb in "${PLAYBOOKS[@]}"; do
+  pp=$(pick_port "$PLAYBOOK_PORT_BASE") || die "no free port near $PLAYBOOK_PORT_BASE for playbook $pb"
+  PLAYBOOK_PORTS+=("$pp")
+  add_port "$pp"
+done
 
 # --- seed services.json if missing ---
 # Empty by default; user adds services with `proxy_to` + `url` + `category` and
@@ -205,8 +261,7 @@ if (( ${#PLAYBOOKS[@]} > 0 )); then
   say "playbooks discovered in $PLAYBOOKS_DIR:"
   i=0
   for pb in "${PLAYBOOKS[@]}"; do
-    port=$((PLAYBOOK_PORT_BASE + i))
-    printf "    %-12s 127.0.0.1:%s  -> https://%s/playbook/%s/\n" "$pb" "$port" "$TAILNET_HOST" "$pb"
+    printf "    %-12s 127.0.0.1:%s  -> https://%s/playbook/%s/\n" "$pb" "${PLAYBOOK_PORTS[$i]}" "$TAILNET_HOST" "$pb"
     i=$((i + 1))
   done
 else
@@ -270,14 +325,13 @@ render_ttyd_service() {
 render_ttyd_service "chooser" "$CHOOSER_PORT" "/chooser/" "$ROOT/chooser/chooser"
 
 # --- per-playbook ttyd services ---
-# Each playbook gets its own ttyd, its own port, its own tmux session named
-# claude-<playbook>. CLAUDE_CONFIG_DIR is exported by the wrapper script BEFORE
-# tmux creates the session, so reattach picks up the right config.
+# Each playbook gets its own ttyd, its own port (pre-picked above into
+# $PLAYBOOK_PORTS), its own tmux session named claude-<playbook>.
+# CLAUDE_CONFIG_DIR is exported by the wrapper BEFORE tmux creates the session
+# so reattach picks up the right config.
 i=0
-PLAYBOOK_PORTS=()
 for pb in "${PLAYBOOKS[@]}"; do
-  port=$((PLAYBOOK_PORT_BASE + i))
-  PLAYBOOK_PORTS+=("$port")
+  port="${PLAYBOOK_PORTS[$i]}"
   i=$((i + 1))
 
   pb_dir="$PLAYBOOKS_DIR/$pb"
