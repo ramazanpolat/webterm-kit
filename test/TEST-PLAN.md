@@ -162,6 +162,7 @@ For installed mode replace `http://localhost:8080` with `https://<tailnet-host>`
 | R12 | `GET /api/processes` | JSON with `.processes` array |
 | R13 | `GET /api/status` | JSON with `.entries`, `.now` |
 | R14 | `GET http://<host>/` (installed mode only) | 301 → `https://<host>/` |
+| R15 | `GET http://<tailnet-host>:8080/` (portable mode, from another tailnet device) | 200 + dashboard SPA. **Catches B10**: site block must use bare `:PORT`, not literal `localhost:PORT`. |
 
 `./test/smoke.sh` automates R1-R14 — these are listed here so a manual
 walker has the full list in one place.
@@ -478,6 +479,7 @@ Setup: `./run.sh` (after the `local name=…` fix) on `localhost:8080`,
 - **B7** (fixed): `macOptionIsMeta=true` was hardcoded in the ttyd template. Broke `@` (and other Option-modified characters) on Turkish-Q / German / French / Spanish / Polish / Czech keyboards — xterm.js intercepted the Option modifier before the OS layout produced the symbol. Found during the manual T3 walk on a Turkish-Q keyboard. Fix: templated as `__MAC_OPTION_IS_META__`, env-var configurable in both `install.sh` and `run.sh`, default flipped to `false` (works for everyone). US users who want Option-as-Meta Readline shortcuts opt in: `MAC_OPTION_IS_META=true ./run.sh`. Test: T3.
 - **B8** (interaction, documented): mouse wheel in the terminal navigates command history instead of scrolling. Root cause is **not webterm-kit** — chooser/playbook sessions wrap in tmux, tmux uses the alt buffer with mouse mode, and `set -g mouse off` (the tmux default) causes xterm.js to translate wheel into Up/Down arrows that zsh sees as `up-line-or-history`. Fix is in the *user's* `~/.tmux.conf`: `set -g mouse on`. Documented in T11 and surfaced here so it doesn't get re-reported. Found during the manual T11 walk.
 - **B9** (fixed): `run.sh` ended with `exec caddy run …`, which replaces the shell with Caddy. When the user pressed Ctrl-C, Caddy exited cleanly but the shell was already gone — so the EXIT/INT/TERM trap never fired and every backgrounded ttyd + the dashboard survived as orphan processes. Fix: run Caddy as a child (`caddy run … & wait $!`) so the shell stays alive to handle the trap. Verified: after Ctrl-C, `pgrep` shows no straggler ttyd / dashboard / Caddy processes. Test: G3.
+- **B10** (fixed): in non-TLS portable mode, `run.sh` rendered the Caddy site block as `http://localhost:PORT, http://127.0.0.1:PORT { … }`. Caddy treats those as **literal Host-header matchers** — so requests reaching the box via the tailnet hostname (e.g. `http://macminim.tailad422.ts.net:8080/`) didn't match any site block and fell through to Caddy's default empty 200, which the user saw as a "blank page". Fix: render the site block as bare `:PORT { … }`, which matches any Host header on that port. The TLS branch is unchanged (TLS needs an explicit hostname for the cert). Test: R15 below. Found when the user reported a blank page hitting webterm-kit from a phone over Tailnet.
 
 #### Browser-harness limitations (worth knowing for future walks)
 

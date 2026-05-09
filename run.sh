@@ -192,7 +192,12 @@ if $USE_TLS; then
   site_block="${SCHEME}://${HOST}:${FRONT_PORT} {
 	tls $CERT_PATH $KEY_PATH"
 else
-  site_block="http://${HOST}:${FRONT_PORT}, http://127.0.0.1:${FRONT_PORT} {"
+  # Bare `:PORT` matches ANY Host header on that port — so reaching the box
+  # via localhost, the LAN IP, or the tailnet hostname all work. Listing
+  # specific hosts (`http://localhost:PORT, http://127.0.0.1:PORT`) made
+  # tailnet requests fall through to Caddy's default empty 200, which looked
+  # like a blank page.
+  site_block=":${FRONT_PORT} {"
 fi
 
 cat > "$CADDYFILE" <<EOF
