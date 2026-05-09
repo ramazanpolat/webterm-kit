@@ -8,13 +8,14 @@ through a browser. No GUI app, no public internet exposure.
    any device on Tailnet
             │
             ▼
-   ┌────────────────────────────┐
-   │  https://mymac.tailXX.ts.net/                  ← dashboard  │
-   │  https://mymac.tailXX.ts.net/chooser/          ← TUI picker │
-   │  https://mymac.tailXX.ts.net/tmux/<name>/      ← attach     │
-   │  https://mymac.tailXX.ts.net/playbook/<name>/  ← Claude     │
-   └─────────────────┬──────────────────────────────────────────┘
-                     │ Caddy on :443  (TLS via Tailscale cert)
+   ┌──────────────────────────────────────────────────────────────┐
+   │  https://mymac.tailXX.ts.net/                  ← dashboard   │
+   │  https://mymac.tailXX.ts.net/chooser/          ← TUI picker  │
+   │  https://mymac.tailXX.ts.net/tmux/<name>/      ← attach      │
+   │  https://mymac.tailXX.ts.net/playbook/<name>/  ← Claude      │
+   └─────────────────┬────────────────────────────────────────────┘
+                     │ Caddy on :443  (TLS via Tailscale cert) — installed mode
+                     │ Caddy on :8080 (plain HTTP)              — portable mode
    ┌─────────────────┴────────────────────────────────────┐
    ▼                          ▼                          ▼
    ttyd (chooser)      ttyd × N (one per playbook)   Go dashboard
@@ -22,21 +23,25 @@ through a browser. No GUI app, no public internet exposure.
                        (each wraps tmux + claude)
 ```
 
-Everything binds `127.0.0.1`. **Caddy on `:443` is the only internet-facing
-process**, and it terminates TLS with the cert your Tailnet already gives you.
+All ttyds and the dashboard bind `127.0.0.1`. Caddy is the only process that
+listens on a public-ish port — `:443` (HTTPS, with the Tailscale cert) in
+installed mode, or a high HTTP port in portable mode.
 
 ## What you get
 
-- **Browser-accessible terminals** over your Tailnet, HTTPS only.
-- **One URL per thing**, no port numbers to remember:
-  - `/` — dashboard (launcher with tabs for terminals, services, storage, media)
+- **Browser-accessible terminals** over your Tailnet.
+- **One URL per thing**, no port numbers to remember (in installed mode):
+  - `/` — dashboard, with tabs: webterm | services | storage | media | discover
   - `/chooser/` — Bubble Tea TUI session picker
   - `/tmux/<name>/` — attach (or create) tmux session `<name>`
   - `/playbook/<name>/` — that Claude playbook in its own tmux-wrapped ttyd
   - `/<your-service>/` — anything you put in `~/.webterm-kit/services.json`
-- **launchd-managed**, so it survives reboots and crashes.
+- **launchd-managed** (installed mode) so it survives reboots and crashes,
+  or **foreground tree** (portable mode) for fast dev iteration.
 - **Auto-discovery** of `~/.claude-playbooks/*/CLAUDE.md` — drop a folder,
-  re-run `./install.sh`, get a new URL.
+  re-run, get a new URL.
+- **Works with non-US keyboards** out of the box (Turkish-Q, German, French,
+  Spanish, Polish, …) — see [keyboard layouts](#keyboard-layouts) below.
 
 ## Requirements
 
@@ -69,17 +74,25 @@ reverses portable mode.
 ```bash
 git clone https://github.com/ramazanpolat/webterm-kit.git
 cd webterm-kit
-./run.sh                            # HTTP on localhost:8080
+./run.sh                            # HTTP on :8080 (any Host header — tailnet works)
 ./run.sh --tls                      # HTTPS on :8443 (needs Tailscale cert)
 ./run.sh --port 9000 --host my.lan  # any host/port you want
+./run.sh --no-build                 # skip `go build` if binaries are current
 ```
 
 `./run.sh` builds the binaries, renders a dev Caddyfile, starts every backend
-in the background, and runs Caddy in the foreground. Ctrl-C kills everything.
-Logs land in `./logs/<service>.log`.
+in the background, and runs Caddy as a child process so Ctrl-C cleans up the
+whole tree (no orphan ttyds). Per-service logs land in `./logs/<service>.log`.
+
+The Caddy front door binds **all interfaces** by default, so once it's up
+you can reach it from any device on your tailnet at
+`http://<your-tailnet-host>:8080/` — no installed mode required for browsing
+from your phone.
 
 If a port is already in use (e.g. installed services are running), `run.sh`
-refuses to start with a clear message. Run `./uninstall.sh` first.
+refuses to start with a clear message. Run `./uninstall.sh` first. You can
+also override any backend port: `DASHBOARD_PORT=8121 ./run.sh` (handy if a
+launchd phantom socket is wedged on the default).
 
 ### Installed mode
 
@@ -122,8 +135,26 @@ TAILNET_HOST=mymac.local BIND_IP=192.168.1.20 ./install.sh
 - adding/removing playbooks under `~/.claude-playbooks/`
 - editing `~/.webterm-kit/services.json`
 
-Caddy runs with `--watch`, so re-rendering the Caddyfile is enough — no Caddy
-restart needed.
+Caddy reloads via its admin API (the dashboard triggers it after rewriting
+the Caddyfile services block), so a fresh `./install.sh` picks up new
+playbooks without restarting the daemon. Use `./install.sh --dry-run` to
+preview without touching anything, or `./install.sh --yes` to skip prompts.
+
+## Keyboard layouts
+
+Many non-US layouts use **Option** as a modifier to produce common
+characters: Turkish-Q `Option+Q` for `@`, German `Option+5` for `[`, etc.
+By default webterm-kit sets `MAC_OPTION_IS_META=false` so those keys reach
+the OS layout layer and produce the right symbol. The trade-off is that
+Readline meta-shortcuts (`Option+B` / `Option+F` to jump words) won't fire
+— if you're on a US keyboard and want them, opt in:
+
+```bash
+MAC_OPTION_IS_META=true ./run.sh
+MAC_OPTION_IS_META=true ./install.sh
+```
+
+Setting it persistently: `export MAC_OPTION_IS_META=true` in your shell rc.
 
 ## Uninstall
 
@@ -186,14 +217,21 @@ schema.
 ## Verifying it works
 
 ```bash
-./test/smoke.sh                          # ~5s, no browser deps
-TAILNET_HOST=mymac.local ./test/smoke.sh # against a different host
-./test/run-all.sh                        # smoke + Playwright SPA tests
+./test/smoke.sh                              # ~5s, no browser deps
+./test/smoke.sh --host localhost:8080        # against ./run.sh portable mode
+TAILNET_HOST=mymac.local ./test/smoke.sh     # against a different installed host
+./test/run-all.sh                            # smoke + Playwright SPA tests
 ```
 
 `smoke.sh` hits every Caddy route and every `/api/*` endpoint with `curl`,
-including a POST/DELETE round-trip on `/api/services`. It's the fastest way to
-confirm a fresh install actually works end-to-end.
+including a POST/DELETE round-trip on `/api/services`. It's the fastest way
+to confirm a fresh install actually works end-to-end.
+
+For end-user behavior the curl suite can't reach (look-and-feel, fonts,
+copy/paste, modifier keys), see **`test/TEST-PLAN.md`** — it walks every
+case by ID, includes a 5-minute manual checklist for the terminal cases
+that automation can't reproduce, and has an append-only walk log of past
+runs and bugs found.
 
 ## Source layout
 
@@ -206,8 +244,11 @@ confirm a fresh install actually works end-to-end.
 | `dashboard/main.go` | Go HTTP service (no toolchain) |
 | `dashboard/static/index.html` | vanilla-JS SPA, embedded into the binary at build |
 | `templates/*.tmpl` | rendered into `generated/` by `install.sh` |
-| `test/smoke.sh` | curl-driven regression tests |
+| `test/TEST-PLAN.md` | end-user-keyed test plan + walk log |
+| `test/smoke.sh` | curl-driven regression tests (Tier 1) |
 | `test/browser/` | Playwright SPA tests (Tier 2) |
+| `test/browser/scenarios.md` | manual exploratory scenarios (Tier 3) |
+| `test/screenshots/` | visual evidence from past walks |
 | `CLAUDE.md` | architecture deep-dive for AI coding assistants |
 | `docs/DESIGN.md` | the v3 UI brief |
 | `docs/PROJECT.md` | project status / roadmap |
