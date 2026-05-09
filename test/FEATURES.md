@@ -124,7 +124,7 @@ test suite — every line item should map to one or more automated tests
 ## K. Operational
 
 - K1. `install.sh` is idempotent
-- K2. `install.sh` seeds `~/.webterm-kit/services.json` if missing
+- K2. `install.sh` seeds `~/.config/webterm-kit/services.json` if missing
 - K3. Generated Caddyfile contains BEGIN/END sentinels for the services block
 - K4. ttyd font fallback chain (Menlo + Apple Symbols + emoji + Hiragino + …)
 - K5. ttyd uses DOM renderer (per-character glyph fallback)

@@ -4,8 +4,9 @@
 #
 # Flags:
 #   --help    print this and exit
-#   --purge   also remove the Caddy system daemon (needs sudo) and
-#             ~/.webterm-kit (the services config). Does NOT touch
+#   --purge   also remove the Caddy system daemon (needs sudo) and the
+#             services config dir (~/.config/webterm-kit/, plus the legacy
+#             ~/.webterm-kit/ if it lingers). Does NOT touch
 #             ~/.claude-playbooks/ or ~/.tailscale-certs/.
 #   --yes     skip confirmation prompts
 set -euo pipefail
@@ -106,10 +107,19 @@ if $PURGE; then
     sudo rm -f "$caddy_plist"
   fi
 
-  if [[ -d "$HOME/.webterm-kit" ]]; then
-    if confirm "Remove $HOME/.webterm-kit (services config)? [y/N]:" N; then
-      rm -rf "$HOME/.webterm-kit"
-      say "removed $HOME/.webterm-kit"
+  # Remove the services config dir (XDG path, plus the legacy ~/.webterm-kit/
+  # if a pre-migration install left it behind). Single confirmation covers both.
+  services_xdg="${XDG_CONFIG_HOME:-$HOME/.config}/webterm-kit"
+  services_legacy="$HOME/.webterm-kit"
+  to_remove=()
+  [[ -d "$services_xdg"    ]] && to_remove+=("$services_xdg")
+  [[ -d "$services_legacy" ]] && to_remove+=("$services_legacy")
+  if (( ${#to_remove[@]} > 0 )); then
+    if confirm "Remove ${to_remove[*]} (services config)? [y/N]:" N; then
+      for d in "${to_remove[@]}"; do
+        rm -rf "$d"
+        say "removed $d"
+      done
     fi
   fi
 fi
@@ -121,7 +131,7 @@ if ! $PURGE; then
   echo
   printf "Things that stayed (run with --purge to also remove):\n"
   printf "  Caddy system daemon (if installed): /Library/LaunchDaemons/%s.caddy.plist\n" "$PREFIX"
-  printf "  Services config:                    %s/.webterm-kit/\n" "$HOME"
+  printf "  Services config:                    %s/webterm-kit/\n" "${XDG_CONFIG_HOME:-$HOME/.config}"
   echo
   printf "Things that are NEVER touched (yours, not ours):\n"
   printf "  Playbooks:                          %s/.claude-playbooks/\n" "$HOME"

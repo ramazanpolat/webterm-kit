@@ -119,7 +119,21 @@ prompt TAILNET_HOST  "Tailnet hostname (e.g. mymac.tailXXXX.ts.net)"  "$default_
 prompt BIND_IP       "Bind IP for Caddy (your tailnet IP)"             "$default_ip"
 prompt LABEL_PREFIX  "launchd label prefix"                            "com.webterm"
 PLAYBOOKS_DIR="${PLAYBOOKS_DIR:-$HOME/.claude-playbooks}"
-SERVICES_DIR="${SERVICES_DIR:-$HOME/.webterm-kit}"
+
+# XDG-compliant config path (~/.config/webterm-kit/), with one-shot migration
+# from the old ~/.webterm-kit/ if it exists. Honors $XDG_CONFIG_HOME if set.
+SERVICES_DIR_DEFAULT="${XDG_CONFIG_HOME:-$HOME/.config}/webterm-kit"
+SERVICES_DIR_LEGACY="$HOME/.webterm-kit"
+if [[ ! -d "$SERVICES_DIR_DEFAULT" && -d "$SERVICES_DIR_LEGACY" ]]; then
+  if $DRY_RUN; then
+    warn "would migrate $SERVICES_DIR_LEGACY → $SERVICES_DIR_DEFAULT (XDG)"
+  else
+    mkdir -p "$(dirname "$SERVICES_DIR_DEFAULT")"
+    mv "$SERVICES_DIR_LEGACY" "$SERVICES_DIR_DEFAULT"
+    say "migrated $SERVICES_DIR_LEGACY → $SERVICES_DIR_DEFAULT (XDG)"
+  fi
+fi
+SERVICES_DIR="${SERVICES_DIR:-$SERVICES_DIR_DEFAULT}"
 SERVICES_FILE="$SERVICES_DIR/services.json"
 
 [[ -n "$TAILNET_HOST" ]] || die "TAILNET_HOST is required"

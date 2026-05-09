@@ -20,7 +20,7 @@ webterm-kit/
 │   ├── PROJECT.md             # project status / roadmap / decisions
 │   ├── CODEWIKI.md            # this file
 │   └── DESIGN.md              # UI redesign brief
-├── services.example.json      # schema example for ~/.webterm-kit/services.json
+├── services.example.json      # schema example for ~/.config/webterm-kit/services.json
 │
 ├── chooser/                   # Bubble Tea TUI session picker
 │   ├── go.mod
@@ -109,7 +109,7 @@ Allocated (one per item):
 | 8030, 8031, 8032… | per-playbook ttyds (one per `~/.claude-playbooks/*/CLAUDE.md`) |
 
 Per-service routes added by the user via `/api/services` POST or by editing
-`~/.webterm-kit/services.json` use whatever `proxy_to` they declare.
+`~/.config/webterm-kit/services.json` use whatever `proxy_to` they declare.
 
 ---
 
@@ -144,7 +144,7 @@ can rewrite just that region:
 | method | path | request | response | source |
 |---|---|---|---|---|
 | GET | `/api/sessions` | — | `{sessions, playbooks, chooserUrl}` | `tmux list-sessions/list-panes` + `~/.claude-playbooks/*` |
-| GET | `/api/services` | — | `{services: Service[]}` | `~/.webterm-kit/services.json` |
+| GET | `/api/services` | — | `{services: Service[]}` | `~/.config/webterm-kit/services.json` |
 | POST | `/api/services` | `Service` | 201 / 400 / 409 | appends + rewrites Caddyfile services block + `caddy reload` |
 | DELETE | `/api/services?name=X` | — | 204 / 400 / 404 | removes + rewrites Caddyfile + `caddy reload` |
 | GET | `/api/processes` | — | `{processes: Process[]}` with kind+protocol annotations | `lsof -nP -iTCP -sTCP:LISTEN` + `ps -o command=` + HTTP/HTTPS probe |
@@ -176,7 +176,7 @@ GET / + TLS handshake fallback, 200ms timeout, 60s cache per pid:port).
 
 ## Config files
 
-### `~/.webterm-kit/services.json`
+### `~/.config/webterm-kit/services.json`
 
 Auto-seeded by `install.sh` if missing. Schema:
 
@@ -254,7 +254,7 @@ cd dashboard && go build -o dashboard .
 ./dashboard/dashboard --bind 127.0.0.1 --port 8021 \
   --chooser-url http://localhost:8020 \
   --playbooks-dir ~/.claude-playbooks \
-  --services-file ~/.webterm-kit/services.json \
+  --services-file ~/.config/webterm-kit/services.json \
   --caddyfile /tmp/test-Caddyfile
 
 # Standalone chooser (needs tmux running)
@@ -293,7 +293,7 @@ ls screenshots/                    # then view PNGs
 - **"What does the dashboard return for X?"** → `dashboard/main.go` (search `mux.HandleFunc`)
 - **"Why is the SPA doing this?"** → `dashboard/static/index.html` (everything inline)
 - **"What does the chooser do for key X?"** → `chooser/main.go` (search `case "X"`)
-- **"How is service Y wired up?"** → `~/.webterm-kit/services.json` + the
+- **"How is service Y wired up?"** → `~/.config/webterm-kit/services.json` + the
   generated Caddyfile services block (live-rewritten by `regenerateCaddyfileServices`)
 - **"What gets re-bootstrapped on `./install.sh`?"** → search `launchctl bootstrap` in install.sh
 - **"What did I just break?"** → `./test/run-all.sh`

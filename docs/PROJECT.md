@@ -73,7 +73,7 @@ Dogfooded daily by the maintainer.
 
 ### v3 (current — on `main`)
 - **Tabbed launcher** — webterm | services | storage | media | discover
-- **Service registry** — `~/.webterm-kit/services.json`, dashboard reads
+- **Service registry** — `~/.config/webterm-kit/services.json`, dashboard reads
   + dashboard writes (POST /api/services rewrites the Caddyfile services
   block via sentinels and triggers `caddy reload`)
 - **Discover tab** — `lsof | ps` enumeration with HTTP/HTTPS probe;

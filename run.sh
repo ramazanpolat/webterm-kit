@@ -114,7 +114,17 @@ check_port "$ADMIN_PORT"     "Caddy admin"
 
 # --- discover playbooks ---
 PLAYBOOKS_DIR="${PLAYBOOKS_DIR:-$HOME/.claude-playbooks}"
-SERVICES_DIR="${SERVICES_DIR:-$HOME/.webterm-kit}"
+
+# XDG-compliant config path (~/.config/webterm-kit/), with one-shot migration
+# from the old ~/.webterm-kit/ if it exists. Honors $XDG_CONFIG_HOME if set.
+SERVICES_DIR_DEFAULT="${XDG_CONFIG_HOME:-$HOME/.config}/webterm-kit"
+SERVICES_DIR_LEGACY="$HOME/.webterm-kit"
+if [[ ! -d "$SERVICES_DIR_DEFAULT" && -d "$SERVICES_DIR_LEGACY" ]]; then
+  mkdir -p "$(dirname "$SERVICES_DIR_DEFAULT")"
+  mv "$SERVICES_DIR_LEGACY" "$SERVICES_DIR_DEFAULT"
+  say "migrated $SERVICES_DIR_LEGACY → $SERVICES_DIR_DEFAULT (XDG)"
+fi
+SERVICES_DIR="${SERVICES_DIR:-$SERVICES_DIR_DEFAULT}"
 SERVICES_FILE="$SERVICES_DIR/services.json"
 PLAYBOOKS=()
 if [[ -d "$PLAYBOOKS_DIR" ]]; then

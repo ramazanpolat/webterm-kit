@@ -717,7 +717,7 @@ func main() {
 	keyFile := flag.String("key", "", "TLS key file")
 	chooserURL := flag.String("chooser-url", "", "base URL of the chooser ttyd, e.g. https://host/chooser")
 	playbooksDir := flag.String("playbooks-dir", "", "path to playbooks root (default $HOME/.claude-playbooks)")
-	servicesFile := flag.String("services-file", "", "path to services.json (default $HOME/.webterm-kit/services.json)")
+	servicesFile := flag.String("services-file", "", "path to services.json (default $XDG_CONFIG_HOME/webterm-kit/services.json, falling back to $HOME/.config/webterm-kit/services.json)")
 	caddyfilePath := flag.String("caddyfile", "", "path to the running Caddyfile, so the dashboard can rewrite the services block when adding new entries")
 	flag.Parse()
 
@@ -731,8 +731,20 @@ func main() {
 	if *servicesFile == "" {
 		if env := os.Getenv("SERVICES_FILE"); env != "" {
 			*servicesFile = env
-		} else if home, err := os.UserHomeDir(); err == nil {
-			*servicesFile = filepath.Join(home, ".webterm-kit", "services.json")
+		} else {
+			// XDG-compliant default: $XDG_CONFIG_HOME/webterm-kit/services.json,
+			// falling back to $HOME/.config/webterm-kit/services.json. install.sh
+			// and run.sh handle the one-shot migration from the legacy
+			// ~/.webterm-kit/ path; we don't read it directly anymore.
+			cfgRoot := os.Getenv("XDG_CONFIG_HOME")
+			if cfgRoot == "" {
+				if home, err := os.UserHomeDir(); err == nil {
+					cfgRoot = filepath.Join(home, ".config")
+				}
+			}
+			if cfgRoot != "" {
+				*servicesFile = filepath.Join(cfgRoot, "webterm-kit", "services.json")
+			}
 		}
 	}
 

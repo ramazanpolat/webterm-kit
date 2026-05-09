@@ -35,7 +35,7 @@ installed mode, or a high HTTP port in portable mode.
   - `/chooser/` — Bubble Tea TUI session picker
   - `/tmux/<name>/` — attach (or create) tmux session `<name>`
   - `/playbook/<name>/` — that Claude playbook in its own tmux-wrapped ttyd
-  - `/<your-service>/` — anything you put in `~/.webterm-kit/services.json`
+  - `/<your-service>/` — anything you put in `~/.config/webterm-kit/services.json`
 - **launchd-managed** (installed mode) so it survives reboots and crashes,
   or **foreground tree** (portable mode) for fast dev iteration.
 - **Auto-discovery** of `~/.claude-playbooks/*/CLAUDE.md` — drop a folder,
@@ -133,7 +133,7 @@ TAILNET_HOST=mymac.local BIND_IP=192.168.1.20 ./install.sh
 
 - editing templates or `install.sh`
 - adding/removing playbooks under `~/.claude-playbooks/`
-- editing `~/.webterm-kit/services.json`
+- editing `~/.config/webterm-kit/services.json`
 
 Caddy reloads via its admin API (the dashboard triggers it after rewriting
 the Caddyfile services block), so a fresh `./install.sh` picks up new
@@ -160,11 +160,17 @@ Setting it persistently: `export MAC_OPTION_IS_META=true` in your shell rc.
 
 ```bash
 ./uninstall.sh           # remove user services + generated files
-./uninstall.sh --purge   # also remove Caddy daemon and ~/.webterm-kit
+./uninstall.sh --purge   # also remove Caddy daemon + ~/.config/webterm-kit/
 ```
 
 `--purge` will prompt for sudo (to remove the system Caddy daemon) and will
 **not** touch `~/.claude-playbooks/` or `~/.tailscale-certs/`.
+
+> **Note (XDG migration).** The services config moved from `~/.webterm-kit/`
+> to `~/.config/webterm-kit/` to keep the home directory tidy. The first
+> `./install.sh` or `./run.sh` after upgrading auto-migrates the old
+> directory. Both `install.sh` and `uninstall.sh` honor `$XDG_CONFIG_HOME`
+> if you've set it.
 
 ## Manage services
 
@@ -187,7 +193,7 @@ Override the prefix with `LABEL_PREFIX=org.example ./install.sh`.
 
 ## Adding a service
 
-`~/.webterm-kit/services.json` is the only file you edit by hand. Each entry
+`~/.config/webterm-kit/services.json` is the only file you edit by hand. Each entry
 becomes a card on the dashboard; if you give it a `proxy_to`, install.sh adds a
 Caddy `reverse_proxy` block so it lives under your hostname.
 

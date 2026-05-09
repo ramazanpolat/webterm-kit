@@ -29,8 +29,8 @@ cleanup() {
   # Sweep any leftover services with test prefixes (exhaust-, pw-) in case
   # a spec crashed before its own cleanup ran. Tries the API first; if Caddy
   # is down (connection refused), falls back to editing services.json.
-  if [[ -f "$HOME/.webterm-kit/services.json" ]]; then
-    python3 - "$HOME/.webterm-kit/services.json" <<'PYEOF'
+  if [[ -f "$HOME/.config/webterm-kit/services.json" ]]; then
+    python3 - "$HOME/.config/webterm-kit/services.json" <<'PYEOF'
 import json, sys, urllib.request, ssl
 path = sys.argv[1]
 data = json.load(open(path))

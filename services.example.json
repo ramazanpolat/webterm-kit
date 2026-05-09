@@ -1,5 +1,5 @@
 {
-  "_comment_about_this_file": "Schema example for ~/.webterm-kit/services.json. Copy entries you want into the live file. Re-run install.sh to apply.",
+  "_comment_about_this_file": "Schema example for ~/.config/webterm-kit/services.json. Copy entries you want into the live file. Re-run install.sh to apply.",
   "_schema": {
     "name":        "shown on the card (string, required)",
     "description": "subtitle text (string, optional)",
