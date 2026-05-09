@@ -12,6 +12,19 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TEST_PORT=17777
 SERVER_PID=""
 
+# Tailnet host for the cleanup-via-API fallback. Honor $TAILNET_HOST, otherwise
+# derive from `tailscale status` like install.sh does. Empty string is fine —
+# the fallback path edits services.json directly when the API isn't reachable.
+TAILNET_HOST="${TAILNET_HOST:-}"
+if [[ -z "$TAILNET_HOST" ]] && command -v tailscale >/dev/null 2>&1; then
+  TAILNET_HOST=$(tailscale status --self --json 2>/dev/null | python3 -c '
+import json, sys
+try: print(json.load(sys.stdin).get("Self", {}).get("DNSName", "").rstrip("."))
+except Exception: pass
+' 2>/dev/null)
+fi
+export TAILNET_HOST
+
 cleanup() {
   echo
   echo "==> teardown"
@@ -30,9 +43,10 @@ cleanup() {
   # a spec crashed before its own cleanup ran. Tries the API first; if Caddy
   # is down (connection refused), falls back to editing services.json.
   if [[ -f "$HOME/.config/webterm-kit/services.json" ]]; then
-    python3 - "$HOME/.config/webterm-kit/services.json" <<'PYEOF'
+    python3 - "$HOME/.config/webterm-kit/services.json" "$TAILNET_HOST" <<'PYEOF'
 import json, sys, urllib.request, ssl
 path = sys.argv[1]
+host = sys.argv[2] if len(sys.argv) > 2 else ""
 data = json.load(open(path))
 def istest(s):
     n = s.get('name', '')
@@ -43,11 +57,11 @@ if not removed:
     sys.exit(0)
 ctx = ssl.create_default_context()
 ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
-api_works = True
+api_works = bool(host)  # only try API if we have a host
 for name in removed:
     if api_works:
         req = urllib.request.Request(
-            f'https://macminim.tailad422.ts.net/api/services?name={name}',
+            f'https://{host}/api/services?name={name}',
             method='DELETE')
         try: urllib.request.urlopen(req, context=ctx, timeout=2)
         except Exception: api_works = False

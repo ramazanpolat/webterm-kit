@@ -25,15 +25,33 @@
 #   - Caddy's --watch reload (timing-sensitive, flaky in tests)
 set -uo pipefail
 
-HOST="${TAILNET_HOST:-$(tailscale status --self --json 2>/dev/null \
-  | grep -oE '"DNSName":"[^"]*"' | head -1 | cut -d'"' -f4 | sed 's/\.$//')}"
-HOST="${HOST:-macminim.tailad422.ts.net}"
-URL="https://${HOST}"
-
-# Allow --host override
+# Resolve target host. Precedence: --host arg > $TAILNET_HOST > tailscale CLI.
+# Use python3 to parse tailscale's JSON (newer versions add whitespace after
+# the colon which broke the previous grep -oE).
+HOST=""
 if [[ "${1:-}" == "--host" && -n "${2:-}" ]]; then
-  HOST="$2"; URL="https://${HOST}"
+  HOST="$2"
+elif [[ -n "${TAILNET_HOST:-}" ]]; then
+  HOST="$TAILNET_HOST"
+elif command -v tailscale >/dev/null 2>&1; then
+  HOST=$(tailscale status --self --json 2>/dev/null | python3 -c '
+import json, sys
+try: print(json.load(sys.stdin).get("Self", {}).get("DNSName", "").rstrip("."))
+except Exception: pass
+' 2>/dev/null)
 fi
+
+if [[ -z "$HOST" ]]; then
+  printf 'usage: %s [--host <host[:port]>] | TAILNET_HOST=<host> %s\n' "$0" "$0" >&2
+  printf '  no host detected from tailscale either; pass one explicitly.\n' >&2
+  exit 2
+fi
+
+# If the host already includes a port (--host localhost:8080), use HTTP.
+case "$HOST" in
+  *:*) URL="http://${HOST}" ;;
+  *)   URL="https://${HOST}" ;;
+esac
 
 # --- output helpers ---
 PASS=0; FAIL=0
