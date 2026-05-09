@@ -166,12 +166,6 @@ Setting it persistently: `export MAC_OPTION_IS_META=true` in your shell rc.
 `--purge` will prompt for sudo (to remove the system Caddy daemon) and will
 **not** touch `~/.claude-playbooks/` or `~/.tailscale-certs/`.
 
-> **Note (XDG migration).** The services config moved from `~/.webterm-kit/`
-> to `~/.config/webterm-kit/` to keep the home directory tidy. The first
-> `./install.sh` or `./run.sh` after upgrading auto-migrates the old
-> directory. Both `install.sh` and `uninstall.sh` honor `$XDG_CONFIG_HOME`
-> if you've set it.
-
 ## Manage services
 
 `launchctl` is to launchd what `systemctl` is to systemd. User services are

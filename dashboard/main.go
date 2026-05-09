@@ -732,10 +732,8 @@ func main() {
 		if env := os.Getenv("SERVICES_FILE"); env != "" {
 			*servicesFile = env
 		} else {
-			// XDG-compliant default: $XDG_CONFIG_HOME/webterm-kit/services.json,
-			// falling back to $HOME/.config/webterm-kit/services.json. install.sh
-			// and run.sh handle the one-shot migration from the legacy
-			// ~/.webterm-kit/ path; we don't read it directly anymore.
+			// $XDG_CONFIG_HOME/webterm-kit/services.json, falling back to
+			// $HOME/.config/webterm-kit/services.json.
 			cfgRoot := os.Getenv("XDG_CONFIG_HOME")
 			if cfgRoot == "" {
 				if home, err := os.UserHomeDir(); err == nil {
