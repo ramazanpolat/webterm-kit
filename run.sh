@@ -2,13 +2,14 @@
 # webterm-kit portable runner. macOS or Linux. No launchd, no sudo, no install.
 # Run from inside the cloned repo: ./run.sh
 #
-# Starts every backend (chooser, dashboard, per-playbook ttyds) and Caddy in
-# the foreground. Ctrl-C kills them all. Ports match install.sh (8020/8021/
-# 8030+), so this and the launchd-installed flavor are mutually exclusive on
-# the same machine — run.sh refuses to start if a port is already in use.
+# Starts every backend (chooser, dashboard, per-playbook ttyds) and Caddy.
+# By default it detaches into the background; stop with ./stop.sh.
+# Ports match install.sh (8020/8021/8030+), so portable and installed modes
+# are mutually exclusive on the same machine.
 #
 # Flags:
 #   --help          print this and exit
+#   -it,--interactive  run in the foreground (Ctrl-C stops it)
 #   --tls           HTTPS on :8443 using the Tailscale cert (defaults to HTTP on :8080)
 #   --port N        override the Caddy front-door port (default 8080, or 8443 with --tls)
 #   --host HOST     hostname for URLs (default: localhost, or tailnet host with --tls)
@@ -19,12 +20,14 @@ USE_TLS=false
 FRONT_PORT=""
 HOST=""
 NO_BUILD=false
+INTERACTIVE=false
 while (( $# > 0 )); do
   case "$1" in
     -h|--help)
-      sed -n '2,15p' "$0" | sed 's/^# \?//'
+      sed -n '2,16p' "$0" | sed 's/^# \?//'
       exit 0
       ;;
+    -it|--interactive) INTERACTIVE=true ;;
     --tls)      USE_TLS=true ;;
     --port)     FRONT_PORT="$2"; shift ;;
     --host)     HOST="$2"; shift ;;
@@ -256,10 +259,11 @@ TTYD_FLAGS=(
 )
 
 # --- process management ---
+PIDFILE="$GENERATED_DIR/run.pid"
 declare -a PIDS=()
 cleanup() {
   echo
-  say "shutting down…"
+  say "shutting down..."
   for pid in "${PIDS[@]}"; do
     kill "$pid" 2>/dev/null || true
   done
@@ -270,9 +274,9 @@ cleanup() {
       kill -9 "$pid" 2>/dev/null || true
     fi
   done
+  rm -f "$PIDFILE"
   say "stopped."
 }
-trap cleanup EXIT INT TERM
 
 start_bg() {
   # Two separate `local` statements: when both are on one line, $name in the
@@ -287,37 +291,6 @@ start_bg() {
   PIDS+=("$pid")
   printf "    %-22s pid=%-6s log=%s\n" "$name" "$pid" "$logfile"
 }
-
-# --- start ttyds ---
-say "starting backends (logs in $LOG_DIR/)"
-start_bg "chooser:$CHOOSER_PORT" \
-  ttyd "${TTYD_FLAGS[@]}" -p "$CHOOSER_PORT" -b /chooser/ "$ROOT/chooser/chooser"
-
-i=0
-for pb in "${PLAYBOOKS[@]}"; do
-  port=$((PLAYBOOK_PORT_BASE + i))
-  i=$((i+1))
-  pb_dir="$PLAYBOOKS_DIR/$pb"
-  pb_wrapper="$GENERATED_DIR/claude-$pb.sh"
-  cat > "$pb_wrapper" <<EOF
-#!/usr/bin/env bash
-export CLAUDE_CONFIG_DIR="$pb_dir"
-exec tmux new -A -s "claude-$pb" "claude"
-EOF
-  chmod +x "$pb_wrapper"
-  start_bg "playbook:$pb:$port" \
-    ttyd "${TTYD_FLAGS[@]}" -p "$port" -b "/playbook/$pb/" "$pb_wrapper"
-done
-
-# --- start dashboard ---
-chooser_url="${SCHEME}://${HOST}:${FRONT_PORT}/chooser/"
-start_bg "dashboard:$DASHBOARD_PORT" \
-  "$ROOT/dashboard/dashboard" \
-  --bind=127.0.0.1 --port="$DASHBOARD_PORT" \
-  --chooser-url="$chooser_url" \
-  --playbooks-dir="$PLAYBOOKS_DIR" \
-  --services-file="$SERVICES_FILE" \
-  --caddyfile="$CADDYFILE"
 
 # Wait up to ~3s for every backend to actually bind — a process can fork off
 # successfully but exit immediately with "address already in use" if a wedged
@@ -334,21 +307,77 @@ wait_for_listen() {
   return 1
 }
 
-declare -a UNBOUND=()
-wait_for_listen "$CHOOSER_PORT"   || UNBOUND+=("chooser:$CHOOSER_PORT")
-wait_for_listen "$DASHBOARD_PORT" || UNBOUND+=("dashboard:$DASHBOARD_PORT")
-i=0
-for pb in "${PLAYBOOKS[@]}"; do
-  port=$((PLAYBOOK_PORT_BASE + i))
-  i=$((i+1))
-  wait_for_listen "$port" || UNBOUND+=("playbook:$pb:$port")
-done
+# supervise() = the actual run loop. Spawns every backend, runs Caddy as a
+# child, waits on it. The trap cleans up children + the PID file on exit.
+# Called either directly (foreground / --interactive) or in a backgrounded
+# subshell (default), so a single body covers both modes.
+supervise() {
+  # The dispatcher below installs the trap and writes $PIDFILE — different in
+  # foreground vs background mode (because $$ in a subshell is the *outer*
+  # shell's PID and macOS bash 3.2 has no $BASHPID).
 
-if (( ${#UNBOUND[@]} > 0 )); then
-  warn "backends failed to bind: ${UNBOUND[*]}"
-  warn "see logs in $LOG_DIR/ for the bind error. Caddy will return 502 for these routes."
-fi
+  # --- start ttyds ---
+  say "starting backends (logs in $LOG_DIR/)"
+  start_bg "chooser:$CHOOSER_PORT" \
+    ttyd "${TTYD_FLAGS[@]}" -p "$CHOOSER_PORT" -b /chooser/ "$ROOT/chooser/chooser"
 
+  local i=0 pb pb_dir pb_wrapper port
+  for pb in "${PLAYBOOKS[@]}"; do
+    port=$((PLAYBOOK_PORT_BASE + i))
+    i=$((i+1))
+    pb_dir="$PLAYBOOKS_DIR/$pb"
+    pb_wrapper="$GENERATED_DIR/claude-$pb.sh"
+    cat > "$pb_wrapper" <<EOF
+#!/usr/bin/env bash
+export CLAUDE_CONFIG_DIR="$pb_dir"
+exec tmux new -A -s "claude-$pb" "claude"
+EOF
+    chmod +x "$pb_wrapper"
+    start_bg "playbook:$pb:$port" \
+      ttyd "${TTYD_FLAGS[@]}" -p "$port" -b "/playbook/$pb/" "$pb_wrapper"
+  done
+
+  # --- start dashboard ---
+  local chooser_url="${SCHEME}://${HOST}:${FRONT_PORT}/chooser/"
+  start_bg "dashboard:$DASHBOARD_PORT" \
+    "$ROOT/dashboard/dashboard" \
+    --bind=127.0.0.1 --port="$DASHBOARD_PORT" \
+    --chooser-url="$chooser_url" \
+    --playbooks-dir="$PLAYBOOKS_DIR" \
+    --services-file="$SERVICES_FILE" \
+    --caddyfile="$CADDYFILE"
+
+  # --- verify each backend bound ---
+  declare -a UNBOUND=()
+  wait_for_listen "$CHOOSER_PORT"   || UNBOUND+=("chooser:$CHOOSER_PORT")
+  wait_for_listen "$DASHBOARD_PORT" || UNBOUND+=("dashboard:$DASHBOARD_PORT")
+  i=0
+  for pb in "${PLAYBOOKS[@]}"; do
+    port=$((PLAYBOOK_PORT_BASE + i))
+    i=$((i+1))
+    wait_for_listen "$port" || UNBOUND+=("playbook:$pb:$port")
+  done
+  if (( ${#UNBOUND[@]} > 0 )); then
+    warn "backends failed to bind: ${UNBOUND[*]}"
+    warn "see logs in $LOG_DIR/ for the bind error. Caddy will return 502 for these routes."
+  fi
+
+  # --- Caddy ---
+  # NOT `exec` — that would replace the shell, killing the trap and leaking
+  # children. Run Caddy as a child, wait on it, let the trap clean up.
+  # Redirect Caddy's per-instance state (autosave.json, instance.uuid, locks/)
+  # into ./generated/caddy/ so portable mode stays self-contained. Without
+  # this Caddy writes to $XDG_DATA_HOME/caddy (~/Library/Application Support/
+  # Caddy on macOS), often root-owned from a previous installed-mode run.
+  mkdir -p "$GENERATED_DIR/caddy"
+  XDG_DATA_HOME="$GENERATED_DIR" XDG_CONFIG_HOME="$GENERATED_DIR" \
+    caddy run --config "$CADDYFILE" --adapter caddyfile &
+  local CADDY_PID=$!
+  PIDS+=("$CADDY_PID")
+  wait "$CADDY_PID"
+}
+
+# --- print the URL summary (visible whether we go foreground or background) ---
 echo
 say "ready: ${SCHEME}://${HOST}:${FRONT_PORT}/"
 printf "    %-15s ${SCHEME}://${HOST}:${FRONT_PORT}/\n"             "dashboard"
@@ -357,25 +386,36 @@ for pb in "${PLAYBOOKS[@]}"; do
   printf "    %-15s ${SCHEME}://${HOST}:${FRONT_PORT}/playbook/%s/\n" "playbook:$pb" "$pb"
 done
 echo
-c_dim "press Ctrl-C to stop everything."
-echo
 
-# --- Caddy in the foreground (Ctrl-C delivers SIGINT here, then trap fires) ---
-# --adapter caddyfile is implicit when the file matches the canonical name; we
-# pass it explicitly so the .dev suffix doesn't confuse the adapter.
-#
-# NOTE: NOT `exec` — exec would replace the shell with Caddy, which means the
-# EXIT trap never fires and all the backgrounded ttyds + dashboard survive
-# Ctrl-C as orphans. Run Caddy as a child, wait on it, let the trap clean up.
-# Redirect Caddy's per-instance state (autosave.json, instance.uuid, locks/)
-# into ./generated/caddy/ so portable mode stays self-contained. Without this
-# Caddy writes to $XDG_DATA_HOME/caddy (which on macOS is
-# ~/Library/Application Support/Caddy) — that path is often root-owned from
-# a previous installed-mode run and produces three permission-denied lines on
-# every boot. ./uninstall.sh removes ./generated, so this cleans up too.
-mkdir -p "$GENERATED_DIR/caddy"
-XDG_DATA_HOME="$GENERATED_DIR" XDG_CONFIG_HOME="$GENERATED_DIR" \
-  caddy run --config "$CADDYFILE" --adapter caddyfile &
-CADDY_PID=$!
-PIDS+=("$CADDY_PID")
-wait "$CADDY_PID"
+# Refuse to start if a previous instance is still running. Detected via
+# generated/run.pid containing a live PID.
+if [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+  die "already running (pid $(cat "$PIDFILE")). Stop it first: ./stop.sh"
+fi
+rm -f "$PIDFILE"
+
+if $INTERACTIVE; then
+  echo $$ > "$PIDFILE"        # foreground: this script IS the supervisor
+  trap cleanup EXIT INT TERM  # trap belongs to this shell
+  c_dim "press Ctrl-C to stop everything."
+  echo
+  supervise
+else
+  # Background: fork a subshell to be the supervisor. Trap goes inside the
+  # subshell so it fires when the subshell exits (e.g. via ./stop.sh sending
+  # SIGTERM), NOT when the parent run.sh shell exits a few lines below.
+  ( trap cleanup EXIT INT TERM; supervise ) </dev/null >>"$LOG_DIR/run.log" 2>&1 &
+  super_pid=$!
+  disown "$super_pid" 2>/dev/null || true
+  echo "$super_pid" > "$PIDFILE"
+  # Give the subshell a moment to start; if it crashes early, surface that.
+  sleep 0.5
+  if ! kill -0 "$super_pid" 2>/dev/null; then
+    rm -f "$PIDFILE"
+    die "supervisor exited immediately — see $LOG_DIR/run.log"
+  fi
+  c_dim "running in background (pid $super_pid). stop with: ./stop.sh"
+  echo
+  c_dim "for foreground mode use: ./run.sh -it"
+  echo
+fi

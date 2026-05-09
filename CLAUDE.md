@@ -27,8 +27,10 @@ Both share the same backends and ports (8020/8021/8030+) and are mutually exclus
 ## Common commands
 
 ```bash
-# Portable: foreground, Ctrl-C stops it. Best for dev iteration.
-./run.sh                    # HTTP on localhost:8080
+# Portable: backgrounded by default, ./stop.sh to stop. -it for foreground.
+./run.sh                    # background, returns prompt; PID in generated/run.pid
+./stop.sh                   # SIGTERM the supervisor, wait, clean up
+./run.sh -it                # foreground (interactive); Ctrl-C stops everything
 ./run.sh --tls              # HTTPS on :8443 (uses Tailscale cert)
 ./run.sh --port 9000        # any port you want
 ./run.sh --no-build         # skip `go build` if binaries are current

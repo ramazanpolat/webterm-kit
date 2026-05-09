@@ -74,15 +74,24 @@ reverses portable mode.
 ```bash
 git clone https://github.com/ramazanpolat/webterm-kit.git
 cd webterm-kit
-./run.sh                            # HTTP on :8080 (any Host header — tailnet works)
+./run.sh                            # background by default — prompt returns
+./stop.sh                           # stop the running instance
+./run.sh -it                        # foreground (interactive); Ctrl-C stops it
 ./run.sh --tls                      # HTTPS on :8443 (needs Tailscale cert)
 ./run.sh --port 9000 --host my.lan  # any host/port you want
 ./run.sh --no-build                 # skip `go build` if binaries are current
 ```
 
 `./run.sh` builds the binaries, renders a dev Caddyfile, starts every backend
-in the background, and runs Caddy as a child process so Ctrl-C cleans up the
-whole tree (no orphan ttyds). Per-service logs land in `./logs/<service>.log`.
+and Caddy, then **detaches** so you get your prompt back. The supervisor PID
+is recorded in `./generated/run.pid`; `./stop.sh` reads it, sends SIGTERM,
+waits for the trap to clean up children, then removes the file. Re-running
+`./run.sh` while one's already up dies with `already running (pid …). Stop
+it first: ./stop.sh`. Per-service logs land in `./logs/<service>.log` and
+the supervisor log in `./logs/run.log`.
+
+For development where you want to watch output live, use `./run.sh -it` —
+same as above but in the foreground.
 
 The Caddy front door binds **all interfaces** by default, so once it's up
 you can reach it from any device on your tailnet at
@@ -237,7 +246,8 @@ runs and bugs found.
 
 | | |
 |---|---|
-| `run.sh` | portable: foreground process tree, Ctrl-C to stop |
+| `run.sh` | portable: backgrounded supervisor (or `-it` for foreground) |
+| `stop.sh` | stop the backgrounded `run.sh` supervisor |
 | `install.sh` | installed: launchd services + system Caddy daemon |
 | `uninstall.sh` | reverses `install.sh` |
 | `chooser/main.go` | Bubble Tea TUI session picker |
