@@ -103,13 +103,15 @@ fi
 port_in_use() {
   local p=$1
   lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1 && return 0
-  # Capture netstat output, then grep — avoids the `set -o pipefail` +
-  # `grep -q` trap where grep matches early, closes its stdin, netstat dies
-  # of SIGPIPE (exit 141), pipefail surfaces 141 instead of grep's 0, and
-  # the `&& return 0` never fires.
-  local ns
+  # Capture netstat, then match with bash's native regex. Avoids the
+  # `set -o pipefail` + `grep -q` trap where grep -q matches early, closes
+  # its stdin, the upstream producer dies of SIGPIPE (exit 141), pipefail
+  # surfaces 141 instead of grep's 0, and `&& return 0` never fires.
+  # Captured-var + bash regex has no pipe at all, so no producer to kill.
+  local ns re
   ns=$(netstat -an 2>/dev/null) || true
-  printf '%s\n' "$ns" | grep -qE "\.${p}[[:space:]]+.*LISTEN" && return 0
+  re="\.${p}[[:space:]]+.*LISTEN"
+  [[ "$ns" =~ $re ]] && return 0
   return 1
 }
 USED_PORTS=" "

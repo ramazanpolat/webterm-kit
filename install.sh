@@ -156,15 +156,18 @@ PLAYBOOK_PORT_BASE="${PLAYBOOK_PORT_BASE:-8030}"
 # port_in_use: belt-and-suspenders. lsof catches normal listeners; netstat
 # catches the macOS phantom-launchd-socket state (where launchd:1 holds a
 # port but lsof can't see it — survives bootout, only a reboot clears it).
-# Capture netstat to a var first: with `set -o pipefail`, `... | grep -q`
-# matching early closes grep's stdin, netstat dies of SIGPIPE (exit 141), and
-# the pipeline reports 141 instead of 0 — `&& return 0` never fires.
+# Use bash's native regex on captured netstat output, NOT a pipe to grep -q.
+# `... | grep -q` matching early closes its stdin, the producer dies of
+# SIGPIPE (exit 141), `set -o pipefail` surfaces that as the pipeline's
+# exit code, and `&& return 0` never fires. The captured-var + bash regex
+# path has no pipe at all, so no producer to kill.
 port_in_use() {
   local p=$1
   lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1 && return 0
-  local ns
+  local ns re
   ns=$(netstat -an 2>/dev/null) || true
-  printf '%s\n' "$ns" | grep -qE "\.${p}[[:space:]]+.*LISTEN" && return 0
+  re="\.${p}[[:space:]]+.*LISTEN"
+  [[ "$ns" =~ $re ]] && return 0
   return 1
 }
 
@@ -524,12 +527,41 @@ if launchctl print "system/$caddy_label" >/dev/null 2>&1; then
 fi
 
 echo
-if $caddy_running; then
+# If a daemon's already running, check whether its installed plist actually
+# points at the Caddyfile we just rendered. If yes, a kickstart suffices. If
+# no (e.g. you ran install.sh once from /a/webterm-kit and again from
+# /b/webterm-kit, or repathed your checkout), we have to swap the plist —
+# kickstart alone keeps it reading the wrong Caddyfile and Caddy 502s every
+# request.
+caddy_plist_points_here=true
+if $caddy_running && [[ -f "$caddy_system_plist" ]]; then
+  if ! grep -q "$CADDYFILE_PATH" "$caddy_system_plist" 2>/dev/null; then
+    caddy_plist_points_here=false
+  fi
+fi
+
+if $caddy_running && $caddy_plist_points_here; then
   say "Caddy daemon already bootstrapped — kicking it to pick up the new Caddyfile"
   if sudo launchctl kickstart -k "system/$caddy_label" 2>/dev/null; then
     say "Caddy reloaded"
   else
     warn "couldn't kick Caddy — try: sudo launchctl kickstart -k system/$caddy_label"
+  fi
+elif $caddy_running && ! $caddy_plist_points_here; then
+  warn "Caddy daemon is running but its plist points at a different Caddyfile"
+  warn "(probably a previous install from another checkout). Re-installing the daemon plist."
+  say "swapping Caddy daemon plist (will prompt for sudo)"
+  if sudo launchctl bootout "system/$caddy_label" 2>/dev/null \
+      && sudo cp "$caddy_plist_src" "$caddy_system_plist" \
+      && sudo chown root:wheel "$caddy_system_plist" \
+      && sudo launchctl bootstrap system "$caddy_system_plist"; then
+    say "Caddy daemon re-bootstrapped, now reading $CADDYFILE_PATH"
+  else
+    warn "swap failed; commands to retry by hand:"
+    printf "  sudo launchctl bootout system/%s\n" "$caddy_label"
+    printf "  sudo cp '%s' '%s'\n" "$caddy_plist_src" "$caddy_system_plist"
+    printf "  sudo chown root:wheel '%s'\n" "$caddy_system_plist"
+    printf "  sudo launchctl bootstrap system '%s'\n" "$caddy_system_plist"
   fi
 else
   say "Caddy daemon is not yet bootstrapped (it needs sudo to bind :80/:443)"
